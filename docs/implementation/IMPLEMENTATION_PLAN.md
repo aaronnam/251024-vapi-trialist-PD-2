@@ -469,10 +469,9 @@ The current configuration follows best practices:
 **Owner:** Reliability Engineer
 **Estimate:** 2 hours
 
-#### Subtask 1.3.1: Add TTS fallback to OpenAI ✅ COMPLETED
+#### Subtask 1.3.1: Add TTS fallback to OpenAI
 **Reference:** `/docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (line 69)
 **LiveKit Docs:** `/agents/build/events` (FallbackAdapter for automatic failover)
-**Implementation:** `my-app/src/agent.py:240-268` (FallbackAdapter with ElevenLabs primary, OpenAI fallback)
 
 ```python
 try:
@@ -492,10 +491,9 @@ except Exception as e:
 3. Log fallback usage
 4. Test fallback scenarios
 
-#### Subtask 1.3.2: Implement graceful error recovery ✅ COMPLETED
+#### Subtask 1.3.2: Implement graceful error recovery
 **Reference:** `REQUIREMENTS_MAP.md` - Section 6
 **LiveKit Docs:** `/agents/build/events` (ErrorEvent handling, recoverable field)
-**Implementation:** `my-app/src/error_recovery.py` (CircuitBreaker, retry logic, ErrorRecoveryMixin), integrated in `agent.py:23-38,286-398`
 
 ```python
 # Error handling patterns
@@ -524,20 +522,42 @@ if tool_failed:
 **Owner:** Backend Engineer
 **Estimate:** 4 hours
 
+**IMPORTANT: Before implementing, read these references:**
+1. **Unleash API Documentation:** https://help.unleash.so/apidocs (see captured docs below)
+2. **LiveKit Docs:** https://docs.livekit.io/agents/build/tools (function_tool decorator, RunContext, ToolError)
+3. **LiveKit External API Pattern:** https://docs.livekit.io/agents/build/external-data
+4. **Anthropic Tool Guidelines:** `../anthropic-agent-guides/250911-anthropic-building-effective-tools.md` (lines 107-163)
+
 #### Subtask 2.1.1: Implement unleash_search_knowledge tool with Unleash API
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 88-96)
-**Documentation:** `../research/livekit/function-tools.md` - Section 1
-**LiveKit Docs:** `/agents/build/tools` (@function_tool decorator, RunContext, async patterns, ToolError), `/agents/build/external-data` (external API calls)
 **Design Principle:** Tool consolidation - This tool should handle search AND provide actionable next steps
 
+**Unleash API Key Information:**
+- **Base URL:** `https://e-api.unleash.so/` (NOT `/v1/search` - that was incorrect)
+- **Endpoint:** POST `/search` (relative to base URL)
+- **Authentication:** Bearer token in `Authorization` header
+- **Optional Header:** `unleash-account` for impersonation (if using impersonated API key)
+- **API Swagger Docs:** https://api.unleash.wiki
+
+**Environment Variables Required (already in .env.local):**
+```bash
+UNLEASH_API_KEY=your_api_key_here  # Bearer token from Unleash Admin Center
+UNLEASH_BASE_URL=https://e-api.unleash.so  # Can override for private tenant
+UNLEASH_ASSISTANT_ID=optional_assistant_id  # Optional, defaults to workspace assistant
+```
+
+**Implementation with Correct API Structure:**
 ```python
 from livekit.agents import function_tool, RunContext, ToolError
 import os
 import httpx
 from typing import Optional, Dict, Any
+import logging
+
+logger = logging.getLogger("agent")
 
 class PandaDocTrialistAgent(Agent):
-    # ... other agent code ...
+    # ... existing agent code ...
 
     @function_tool()
     async def unleash_search_knowledge(
@@ -554,173 +574,353 @@ class PandaDocTrialistAgent(Agent):
 
         Args:
             query: Natural language question about PandaDoc
-            category: Optional - "features", "pricing", "integrations", "troubleshooting"
-            response_format: "concise" for essential info, "detailed" for comprehensive results
+            category: Optional - filter by "features", "pricing", "integrations", "troubleshooting"
+            response_format: "concise" for essential info (voice-optimized), "detailed" for comprehensive results
         """
-        # Add "thinking" filler
-        await context.llm.say("Let me find that for you...")
+        # Voice-optimized filler (keep it short for low latency)
+        await context.say("Let me find that for you...")
 
         try:
-            # Connect to Unleash API
+            # Get Unleash configuration
             unleash_api_key = os.getenv("UNLEASH_API_KEY")
-            unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://api.unleash.com")
+            if not unleash_api_key:
+                raise ToolError("PandaDoc knowledge base is not configured. Let me help you directly instead.")
 
+            unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://e-api.unleash.so")
+            unleash_assistant_id = os.getenv("UNLEASH_ASSISTANT_ID")  # Optional
+
+            # Build request payload (Unleash API structure)
+            request_payload = {
+                "query": query,
+                "contentSearch": True,  # Search content, not just titles
+                "semanticSearch": True,  # Enable AI-powered semantic search
+                "paging": {
+                    "pageSize": 3 if response_format == "concise" else 5,
+                    "pageNumber": 0
+                }
+            }
+
+            # Add optional filters if category provided
+            if category:
+                request_payload["filters"] = {
+                    "type": [category]  # Filter by resource type
+                }
+
+            # Add assistant ID if configured
+            if unleash_assistant_id:
+                request_payload["assistantId"] = unleash_assistant_id
+
+            # Make API request with proper error handling
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{unleash_base_url}/v1/search",
-                headers={
-                    "Authorization": f"Bearer {unleash_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "query": query,
-                    "category": category,
-                    "max_results": 3 if response_format == "concise" else 5
-                },
-                timeout=5.0
-            )
-            response.raise_for_status()
-            results = response.json()
+                    f"{unleash_base_url}/search",
+                    headers={
+                        "Authorization": f"Bearer {unleash_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_payload,
+                    timeout=5.0  # 5 second timeout for voice responsiveness
+                )
 
-        # Format response based on response_format parameter
-        if response_format == "concise":
-            # Return only essential information for quick understanding
-            return {
-                "answer": results.get("results", [{}])[0].get("content", ""),
-                "action": self._determine_next_action(query, results),
-                "found": len(results.get("results", [])) > 0
-            }
-        else:
-            # Return detailed results with all context
-            return {
-                "results": results.get("results", []),
-                "suggested_followup": self._determine_next_action(query, results),
-                "related_topics": results.get("related", [])
-            }
+                # Check for API errors
+                if response.status_code == 400:
+                    logger.warning(f"Unleash API bad request: {response.text}")
+                    raise ToolError("I couldn't understand that search. Could you rephrase your question?")
+                elif response.status_code == 401:
+                    logger.error("Unleash API authentication failed")
+                    raise ToolError("I'm having trouble accessing the knowledge base. Let me help you directly.")
+                elif response.status_code >= 500:
+                    logger.error(f"Unleash API server error: {response.status_code}")
+                    raise ToolError("The knowledge base is temporarily unavailable. I can still help you though!")
+
+                response.raise_for_status()
+                data = response.json()
+
+            # Extract results
+            results = data.get("results", [])
+            total_results = data.get("totalResults", 0)
+
+            # Voice-optimized response formatting
+            if response_format == "concise":
+                # Return only the most relevant result for voice
+                if results:
+                    top_result = results[0]
+                    resource = top_result.get("resource", {})
+                    snippet = top_result.get("snippet", "")
+
+                    return {
+                        "answer": snippet or resource.get("title", ""),
+                        "details": resource.get("description", ""),
+                        "action": self._determine_next_action(query, results),
+                        "found": True,
+                        "total_results": total_results
+                    }
+                else:
+                    return {
+                        "answer": None,
+                        "action": "offer_human_help",
+                        "found": False,
+                        "total_results": 0
+                    }
+            else:
+                # Return detailed results for follow-up
+                return {
+                    "results": [
+                        {
+                            "title": r.get("resource", {}).get("title"),
+                            "snippet": r.get("snippet"),
+                            "highlights": r.get("highlights", [])
+                        }
+                        for r in results
+                    ],
+                    "total_results": total_results,
+                    "suggested_followup": self._determine_next_action(query, results),
+                    "request_id": data.get("requestId")  # For debugging
+                }
 
         except httpx.TimeoutException:
-            # Use ToolError for clean error handling
+            # Timeout - offer alternative help
+            logger.warning("Unleash API timeout after 5 seconds")
             raise ToolError(
-                "The knowledge base is taking longer than expected. "
-                "I can walk you through this myself - what specific part would you like to start with?"
+                "The search is taking longer than expected. "
+                "Let me help you directly - what specific part of PandaDoc would you like to explore?"
+            )
+        except httpx.HTTPError as e:
+            # Network or HTTP error
+            logger.error(f"Unleash API HTTP error: {e}")
+            raise ToolError(
+                "I'm having trouble reaching the knowledge base right now. "
+                "But I can still walk you through PandaDoc - what would you like to know?"
             )
         except Exception as e:
-            # Log the actual error for debugging
-            import logging
-            logging.error(f"Unleash API error: {e}")
-            # Return graceful fallback
+            # Unexpected error - log for debugging but don't expose to user
+            logger.error(f"Unexpected Unleash API error: {type(e).__name__}: {e}")
             raise ToolError(
-                "I'll help you another way. I can connect you with our support team "
-                "or walk you through common solutions."
+                "Something went wrong with the search. "
+                "Let me help you another way - what's your question about PandaDoc?"
             )
 
-    def _determine_next_action(self, query: str, results: dict) -> str:
-        """Determine the best next action based on query and results."""
-        if not results.get("results"):
+    def _determine_next_action(self, query: str, results: list) -> str:
+        """Determine the best next action based on query and results.
+
+        This helper method analyzes the user's query and search results to determine
+        the most appropriate follow-up action for the conversation flow.
+        """
+        if not results:
             return "offer_human_help"
 
         query_lower = query.lower()
-        if "how" in query_lower or "setup" in query_lower:
+
+        # Analyze query intent
+        if any(word in query_lower for word in ["how", "setup", "configure", "create"]):
             return "offer_walkthrough"
-        elif "pricing" in query_lower or "cost" in query_lower:
+        elif any(word in query_lower for word in ["pricing", "cost", "plan", "tier"]):
             return "discuss_roi"
-        elif "integration" in query_lower:
+        elif any(word in query_lower for word in ["integration", "connect", "sync", "api"]):
             return "check_specific_integration"
+        elif any(word in query_lower for word in ["error", "problem", "issue", "broken"]):
+            return "troubleshoot_issue"
         else:
             return "clarify_needs"
 ```
 
-**Actions:**
-1. Set up Unleash API credentials in environment
-2. Implement API client with proper authentication
-3. Add error handling using ToolError
-4. Create helper method `_determine_next_action` as class method
-5. Test with various query types and response formats
+**Critical Implementation Notes to Prevent LiveKit Crashes:**
 
-**Environment Variables Required:**
+1. **Always use ToolError for graceful failures** - Never let raw exceptions bubble up to LiveKit
+2. **Keep timeout at 5 seconds** - Voice conversations can't handle long waits
+3. **Use `context.say()` not `context.llm.say()`** - The latter doesn't exist in LiveKit
+4. **Import httpx with `uv add httpx`** - Add to dependencies before running
+5. **Test with missing API key** - Ensure tool handles missing credentials gracefully
+6. **Log errors for debugging** - But never expose technical details to users
+
+**Required Dependencies to Add:**
 ```bash
-UNLEASH_API_KEY=your_api_key_here
-UNLEASH_BASE_URL=https://api.unleash.com  # Optional, has default
+# Run from /my-app directory
+uv add httpx
 ```
 
-**Implementation Note:** This tool should be implemented as a method of `PandaDocTrialistAgent` class, not as a standalone function.
+**Actions:**
+1. ✅ Read Unleash API documentation (captured via Chrome DevTools)
+2. Add httpx to project dependencies: `uv add httpx`
+3. Implement unleash_search_knowledge tool in agent.py
+4. Create helper method `_determine_next_action` as shown above
+5. Test with various query types and API states (success, timeout, auth failure)
+6. Verify voice-optimized responses work with LiveKit TTS
+
+**Testing Checklist:**
+- [ ] Test with valid API key and successful search
+- [ ] Test with missing UNLEASH_API_KEY environment variable
+- [ ] Test with invalid API key (401 error)
+- [ ] Test with timeout (disconnect network)
+- [ ] Test with empty search results
+- [ ] Test both "concise" and "detailed" response formats
+- [ ] Verify logging works without crashing agent
+- [ ] Ensure all ToolErrors provide helpful user messages
 
 #### Subtask 2.1.2: Test unleash_search_knowledge tool
 **Reference:** LiveKit Testing Framework - https://docs.livekit.io/agents/build/testing/
 **Estimate:** 30 minutes
 
-Create a lightweight test file `tests/test_unleash_tool.py`:
+Create a comprehensive test file `tests/test_unleash_tool.py`:
 
 ```python
 import pytest
-from livekit.agents import AgentSession, inference, mock_tools
+import os
+from unittest.mock import patch, AsyncMock
+from livekit.agents import AgentSession, inference, ToolError
 from agent import PandaDocTrialistAgent
+import httpx
 
 @pytest.mark.asyncio
 async def test_unleash_search_basic():
     """Test basic knowledge search returns actionable response."""
+    # Mock the Unleash API response
+    mock_response = {
+        "totalResults": 1,
+        "results": [{
+            "resource": {
+                "title": "Creating Templates in PandaDoc",
+                "description": "Step-by-step guide"
+            },
+            "snippet": "To create a template, go to Templates section...",
+            "highlights": ["Templates", "create"]
+        }],
+        "requestId": "test-123"
+    }
+
     async with (
         inference.LLM(model="openai/gpt-4o-mini") as llm,
         AgentSession(llm=llm) as session,
     ):
-        await session.start(PandaDocTrialistAgent())
-        result = await session.run(user_input="How do I create templates?")
+        agent = PandaDocTrialistAgent()
 
-        # Verify tool was called with correct parameters
-        result.expect.next_event().is_function_call(
-            name="unleash_search_knowledge",
-            arguments={"query": "How do I create templates?"}
-        )
+        # Mock httpx.AsyncClient.post
+        with patch('httpx.AsyncClient.post', new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.status_code = 200
+            mock_post.return_value.json.return_value = mock_response
+            mock_post.return_value.raise_for_status = AsyncMock()
 
-        # Verify tool returns structured response
-        result.expect.next_event().is_function_call_output()
+            await session.start(agent)
+            result = await session.run(user_input="How do I create templates?")
 
-        # Verify agent provides helpful response
-        await result.expect.next_event().is_message(
-            role="assistant"
-        ).judge(llm, intent="Provides clear guidance on creating templates")
+            # Verify tool was called with correct parameters
+            result.expect.next_event().is_function_call(
+                name="unleash_search_knowledge",
+                arguments_match=lambda args: "template" in args.get("query", "").lower()
+            )
+
+            # Verify agent provides helpful response
+            await result.expect.next_event().is_message(
+                role="assistant"
+            ).judge(llm, intent="Provides guidance on creating templates based on search results")
 
 @pytest.mark.asyncio
-async def test_unleash_search_error_handling():
-    """Test graceful handling when API fails."""
-    with mock_tools(
-        PandaDocTrialistAgent,
-        {"unleash_search_knowledge": lambda: RuntimeError("API timeout")}
-    ):
+async def test_unleash_missing_api_key():
+    """Test handling when API key is not configured."""
+    # Temporarily remove API key
+    original_key = os.environ.pop("UNLEASH_API_KEY", None)
+
+    try:
         async with (
             inference.LLM(model="openai/gpt-4o-mini") as llm,
             AgentSession(llm=llm) as session,
         ):
             await session.start(PandaDocTrialistAgent())
-            result = await session.run(user_input="What pricing plans exist?")
+            result = await session.run(user_input="What are the pricing plans?")
 
-            # Verify agent handles error gracefully
+            # Verify tool handles missing API key gracefully
+            result.expect.next_event().is_function_call(name="unleash_search_knowledge")
+
+            # Should get ToolError about missing configuration
+            error_event = result.expect.next_event().is_function_call_error()
+            assert "not configured" in str(error_event.item.error).lower()
+
+            # Verify agent offers alternative help
             await result.expect.contains_message(
                 role="assistant"
-            ).judge(llm, intent="Offers alternative help without exposing technical error")
+            ).judge(llm, intent="Offers to help directly without the knowledge base")
+    finally:
+        # Restore API key if it existed
+        if original_key:
+            os.environ["UNLEASH_API_KEY"] = original_key
 
 @pytest.mark.asyncio
-async def test_unleash_response_format():
-    """Test concise vs detailed response format."""
+async def test_unleash_api_timeout():
+    """Test graceful handling of API timeout."""
     async with (
         inference.LLM(model="openai/gpt-4o-mini") as llm,
         AgentSession(llm=llm) as session,
     ):
-        await session.start(PandaDocTrialistAgent())
+        agent = PandaDocTrialistAgent()
 
-        # Test that default is concise
-        result = await session.run(user_input="What integrations exist?")
+        # Mock httpx timeout
+        with patch('httpx.AsyncClient.post', new_callable=AsyncMock) as mock_post:
+            mock_post.side_effect = httpx.TimeoutException("Request timed out")
 
-        # Check tool call has default response_format
-        event = result.expect.next_event().is_function_call(name="unleash_search_knowledge")
-        assert event.item.arguments.get("response_format", "concise") == "concise"
+            await session.start(agent)
+            result = await session.run(user_input="How do integrations work?")
+
+            # Tool should be called
+            result.expect.next_event().is_function_call(name="unleash_search_knowledge")
+
+            # Should handle timeout with ToolError
+            error_event = result.expect.next_event().is_function_call_error()
+            assert "taking longer" in str(error_event.item.error).lower()
+
+            # Agent should offer alternative help
+            await result.expect.contains_message(
+                role="assistant"
+            ).judge(llm, intent="Offers to help directly when search times out")
+
+@pytest.mark.asyncio
+async def test_unleash_response_format():
+    """Test concise vs detailed response format."""
+    mock_response = {
+        "totalResults": 3,
+        "results": [
+            {"resource": {"title": "Salesforce Integration"}, "snippet": "Connect Salesforce..."},
+            {"resource": {"title": "HubSpot Integration"}, "snippet": "Sync with HubSpot..."},
+            {"resource": {"title": "Zapier Integration"}, "snippet": "Automate workflows..."}
+        ]
+    }
+
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        agent = PandaDocTrialistAgent()
+
+        with patch('httpx.AsyncClient.post', new_callable=AsyncMock) as mock_post:
+            mock_post.return_value.status_code = 200
+            mock_post.return_value.json.return_value = mock_response
+            mock_post.return_value.raise_for_status = AsyncMock()
+
+            await session.start(agent)
+
+            # Test default concise format
+            result = await session.run(user_input="What integrations exist?")
+            event = result.expect.next_event().is_function_call(name="unleash_search_knowledge")
+
+            # Verify default is concise or explicitly set
+            args = event.item.arguments
+            assert args.get("response_format", "concise") == "concise"
+
+            # Test explicit detailed format (would need to be requested in conversation)
+            # This verifies the tool can handle both formats
 ```
 
 **Actions:**
-1. Create test file with 3 focused test cases
-2. Mock Unleash API for error testing
-3. Use judge() to verify response quality
-4. Run with: `pytest tests/test_unleash_tool.py -v`
+1. Create test file `tests/test_unleash_tool.py` with comprehensive test coverage
+2. Mock Unleash API responses and error conditions
+3. Use LiveKit's testing framework with judge() for quality verification
+4. Run tests with: `uv run pytest tests/test_unleash_tool.py -v`
+
+**Testing Command Sequence:**
+```bash
+cd my-app
+uv add httpx  # Add dependency first
+uv run pytest tests/test_unleash_tool.py -v  # Run tests
+```
 
 ### Task 2.2: Calendar Sub-Agent Tool
 **Owner:** Integration Engineer

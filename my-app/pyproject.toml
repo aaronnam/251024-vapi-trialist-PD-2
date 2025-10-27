@@ -13,6 +13,7 @@ dependencies = [
     "livekit-plugins-noise-cancellation~=0.2",
     "livekit-plugins-elevenlabs~=0.2",
     "python-dotenv",
+    "httpx>=0.28.1",
 ]
 
 [dependency-groups]
