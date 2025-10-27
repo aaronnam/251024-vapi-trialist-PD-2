@@ -1,5 +1,8 @@
 import logging
+import os
+from typing import Dict, Any, Optional
 
+import httpx
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -8,8 +11,11 @@ from livekit.agents import (
     JobProcess,
     MetricsCollectedEvent,
     RoomInputOptions,
+    RunContext,
+    ToolError,
     WorkerOptions,
     cli,
+    function_tool,
     metrics,
 )
 from livekit.plugins import noise_cancellation, silero
@@ -197,6 +203,170 @@ with event_type="qualification" and include the discovered signals in the data p
             return True
 
         return False
+
+    @function_tool()
+    async def unleash_search_knowledge(
+        self,
+        context: RunContext,
+        query: str,
+        category: Optional[str] = None,
+        response_format: str = "concise"
+    ) -> Dict[str, Any]:
+        """Search PandaDoc knowledge base and provide actionable guidance.
+
+        Use this tool when the user asks about PandaDoc features, pricing, integrations, or needs help.
+        This tool both searches for information AND suggests next steps.
+
+        Args:
+            query: Natural language question about PandaDoc
+            category: Optional - filter by "features", "pricing", "integrations", "troubleshooting"
+            response_format: "concise" for essential info (voice-optimized), "detailed" for comprehensive results
+        """
+        # Voice-optimized filler (keep it short for low latency)
+        await context.say("Let me find that for you...")
+
+        try:
+            # Get Unleash configuration
+            unleash_api_key = os.getenv("UNLEASH_API_KEY")
+            if not unleash_api_key:
+                raise ToolError("PandaDoc knowledge base is not configured. Let me help you directly instead.")
+
+            unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://e-api.unleash.so")
+            unleash_assistant_id = os.getenv("UNLEASH_ASSISTANT_ID")  # Optional
+
+            # Build request payload (Unleash API structure)
+            request_payload = {
+                "query": query,
+                "contentSearch": True,  # Search content, not just titles
+                "semanticSearch": True,  # Enable AI-powered semantic search
+                "paging": {
+                    "pageSize": 3 if response_format == "concise" else 5,
+                    "pageNumber": 0
+                }
+            }
+
+            # Add optional filters if category provided
+            if category:
+                request_payload["filters"] = {
+                    "type": [category]  # Filter by resource type
+                }
+
+            # Add assistant ID if configured
+            if unleash_assistant_id:
+                request_payload["assistantId"] = unleash_assistant_id
+
+            # Make API request with proper error handling
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{unleash_base_url}/search",
+                    headers={
+                        "Authorization": f"Bearer {unleash_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=request_payload,
+                    timeout=5.0  # 5 second timeout for voice responsiveness
+                )
+
+                # Check for API errors
+                if response.status_code == 400:
+                    logger.warning(f"Unleash API bad request: {response.text}")
+                    raise ToolError("I couldn't understand that search. Could you rephrase your question?")
+                elif response.status_code == 401:
+                    logger.error("Unleash API authentication failed")
+                    raise ToolError("I'm having trouble accessing the knowledge base. Let me help you directly.")
+                elif response.status_code >= 500:
+                    logger.error(f"Unleash API server error: {response.status_code}")
+                    raise ToolError("The knowledge base is temporarily unavailable. I can still help you though!")
+
+                response.raise_for_status()
+                data = response.json()
+
+            # Extract results
+            results = data.get("results", [])
+            total_results = data.get("totalResults", 0)
+
+            # Voice-optimized response formatting
+            if response_format == "concise":
+                # Return only the most relevant result for voice
+                if results:
+                    top_result = results[0]
+                    resource = top_result.get("resource", {})
+                    snippet = top_result.get("snippet", "")
+
+                    return {
+                        "answer": snippet or resource.get("title", ""),
+                        "details": resource.get("description", ""),
+                        "action": self._determine_next_action(query, results),
+                        "found": True,
+                        "total_results": total_results
+                    }
+                else:
+                    return {
+                        "answer": None,
+                        "action": "offer_human_help",
+                        "found": False,
+                        "total_results": 0
+                    }
+            else:
+                # Return detailed results for follow-up
+                return {
+                    "results": [
+                        {
+                            "title": r.get("resource", {}).get("title"),
+                            "snippet": r.get("snippet"),
+                            "highlights": r.get("highlights", [])
+                        }
+                        for r in results
+                    ],
+                    "total_results": total_results,
+                    "suggested_followup": self._determine_next_action(query, results),
+                    "request_id": data.get("requestId")  # For debugging
+                }
+
+        except httpx.TimeoutException:
+            # Timeout - offer alternative help
+            logger.warning("Unleash API timeout after 5 seconds")
+            raise ToolError(
+                "The search is taking longer than expected. "
+                "Let me help you directly - what specific part of PandaDoc would you like to explore?"
+            )
+        except httpx.HTTPError as e:
+            # Network or HTTP error
+            logger.error(f"Unleash API HTTP error: {e}")
+            raise ToolError(
+                "I'm having trouble reaching the knowledge base right now. "
+                "But I can still walk you through PandaDoc - what would you like to know?"
+            )
+        except Exception as e:
+            # Unexpected error - log for debugging but don't expose to user
+            logger.error(f"Unexpected Unleash API error: {type(e).__name__}: {e}")
+            raise ToolError(
+                "Something went wrong with the search. "
+                "Let me help you another way - what's your question about PandaDoc?"
+            )
+
+    def _determine_next_action(self, query: str, results: list) -> str:
+        """Determine the best next action based on query and results.
+
+        This helper method analyzes the user's query and search results to determine
+        the most appropriate follow-up action for the conversation flow.
+        """
+        if not results:
+            return "offer_human_help"
+
+        query_lower = query.lower()
+
+        # Analyze query intent
+        if any(word in query_lower for word in ["how", "setup", "configure", "create"]):
+            return "offer_walkthrough"
+        elif any(word in query_lower for word in ["pricing", "cost", "plan", "tier"]):
+            return "discuss_roi"
+        elif any(word in query_lower for word in ["integration", "connect", "sync", "api"]):
+            return "check_specific_integration"
+        elif any(word in query_lower for word in ["error", "problem", "issue", "broken"]):
+            return "troubleshoot_issue"
+        else:
+            return "clarify_needs"
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.

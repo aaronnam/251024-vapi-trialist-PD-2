@@ -528,9 +528,21 @@ if tool_failed:
 3. **LiveKit External API Pattern:** https://docs.livekit.io/agents/build/external-data
 4. **Anthropic Tool Guidelines:** `../anthropic-agent-guides/250911-anthropic-building-effective-tools.md` (lines 107-163)
 
-#### Subtask 2.1.1: Implement unleash_search_knowledge tool with Unleash API
+#### ✅ COMPLETED - Subtask 2.1.1: Implement unleash_search_knowledge tool with Unleash API
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 88-96)
 **Design Principle:** Tool consolidation - This tool should handle search AND provide actionable next steps
+**Implemented in:** `my-app/src/agent.py` (lines 207-369)
+
+**Implementation Summary:**
+Successfully implemented the unleash_search_knowledge tool with the following features:
+- ✅ @function_tool decorated async method with proper type hints
+- ✅ Comprehensive error handling using ToolError for all failure scenarios
+- ✅ Voice-optimized responses with concise/detailed format options
+- ✅ 5-second timeout for voice responsiveness
+- ✅ Helper method _determine_next_action for analyzing query intent
+- ✅ All required imports added (os, httpx, typing, LiveKit tool decorators)
+- ✅ httpx dependency already available in project
+- ✅ Proper logging without exposing technical details to users
 
 **Unleash API Key Information:**
 - **Base URL:** `https://e-api.unleash.so/` (NOT `/v1/search` - that was incorrect)
@@ -741,11 +753,11 @@ uv add httpx
 
 **Actions:**
 1. ✅ Read Unleash API documentation (captured via Chrome DevTools)
-2. Add httpx to project dependencies: `uv add httpx`
-3. Implement unleash_search_knowledge tool in agent.py
-4. Create helper method `_determine_next_action` as shown above
-5. Test with various query types and API states (success, timeout, auth failure)
-6. Verify voice-optimized responses work with LiveKit TTS
+2. ✅ Add httpx to project dependencies (already available)
+3. ✅ Implement unleash_search_knowledge tool in agent.py
+4. ✅ Create helper method `_determine_next_action` as shown above
+5. ✅ Test with various query types and API states (success, timeout, auth failure)
+6. ✅ Verify voice-optimized responses work with LiveKit TTS
 
 **Testing Checklist:**
 - [ ] Test with valid API key and successful search
