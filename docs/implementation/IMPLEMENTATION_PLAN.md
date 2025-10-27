@@ -164,7 +164,7 @@ Through natural conversation, listen for and discover these qualification signal
 **Team Size & Structure:**
 - Instead of "How many users?", ask: "Walk me through your document workflow - who creates proposals, who reviews them, and who sends them out?"
 - Listen for: number of people mentioned, roles, departments
-- Enterprise signal: 10+ users mentioned
+- Enterprise signal: 5+ users mentioned
 
 **Document Volume:**
 - Instead of "How many documents?", ask: "What kind of documents do you send?" then "How often does your team send those?"
@@ -182,9 +182,8 @@ Through natural conversation, listen for and discover these qualification signal
 - Enterprise signal: Urgent need, replacing current tool
 
 ## Qualification Tiers (Track Internally)
-**Tier 1 - Sales-Ready:** 10+ users AND (100+ docs/month OR Salesforce/HubSpot need OR API requirements)
-**Tier 2 - Nurture:** 10+ users potential OR 5-9 users with growth trajectory
-**Tier 3 - Self-Serve:** <10 users, individual users, simple use cases
+**Tier 1 - Sales-Ready:** 5+ users OR (100+ docs/month OR Salesforce/HubSpot need OR API requirements)
+**Tier 2 - Self-Serve:** <10 users, individual users, simple use cases
 
 When you identify qualification signals through conversation, pass them to webhook_send_conversation_event
 with event_type="qualification" and include the discovered signals in the data payload.
@@ -206,49 +205,173 @@ with event_type="qualification" and include the discovered signals in the data p
 4. Include qualification tiers and thresholds in instructions
 5. Add guidance on passing qualification signals to webhook tool
 
-#### Subtask 1.1.2: Add conversation state management
+#### Subtask 1.1.2: Add conversation state management ✅ COMPLETED
 **Reference:** `../research/livekit/function-tools.md` - Section 2 (RunContext)
 **Documentation:** LiveKit Agent state management patterns
 **LiveKit Docs:** `/agents/build/workflows` (userdata attribute, state with dataclasses), `/agents/build/nodes` (accessing turn_ctx and ChatContext)
+**Implementation:** `my-app/src/agent.py:77-104`
+
+**Memory Architecture:**
+This subtask implements a **two-layer memory system**:
+1. **LLM Conversation Memory** (automatic): The LLM maintains full chat history for conversational recall
+2. **Structured Business State** (explicit): Agent tracks business-critical signals for external systems, routing decisions, and post-call workflows
 
 ```python
 def __init__(self):
     super().__init__(instructions=...)
+
+    # Conversation flow state
     self.conversation_state = "GREETING"
+
+    # Core qualification signals (drive routing and business logic)
     self.discovered_signals = {
+        # Primary qualification criteria
         "team_size": None,
         "monthly_volume": None,
         "integration_needs": [],
         "urgency": None,
-        "qualification_tier": None  # Will be set to "sales_ready", "nurture", or "self_serve"
+        "qualification_tier": None,  # "sales_ready" or "self_serve"
+
+        # Extended business context
+        "industry": None,           # "healthcare", "real estate", "legal", etc.
+        "location": None,           # "Toronto", "US-East", "EMEA", etc.
+        "use_case": None,           # "proposals", "contracts", "quotes", "NDAs"
+        "current_tool": None,       # "manual", "DocuSign", "Adobe Sign", etc.
+        "pain_points": [],          # ["slow turnaround", "no tracking", "manual follow-up"]
+        "decision_timeline": None,  # "this week", "next quarter", "evaluating"
+        "budget_authority": None,   # "decision_maker", "needs_approval", "influencer"
+        "team_structure": None,     # "sales", "legal", "ops", "distributed"
     }
+
+    # Free-form conversation notes (catch-all for important context)
+    self.conversation_notes = []  # Agent can append: ["Previous bad DocuSign experience", "Compliance is critical"]
+
+    # Trial context
     self.trial_day = None
+    self.trial_activity = None  # "created_template", "sent_document", "stuck_on_feature"
 ```
 
 **Actions:**
-1. Add state tracking attributes
-2. Initialize qualification signal tracking (not scoring)
-3. Create state transition methods
-4. Track discovered signals as they emerge naturally in conversation
+1. Add state tracking attributes with expanded business context fields
+2. Initialize qualification signal tracking (not scoring) with core + extended fields
+3. Add conversation_notes list for free-form important context that doesn't fit categories
+4. Create state transition methods
+5. Track discovered signals as they emerge naturally in conversation
+6. Document that LLM handles conversational memory; structured state is for business operations
 
-#### Subtask 1.1.3: Implement state machine transitions
+**Note on Memory:**
+- **Conversational recall** (e.g., "you mentioned Toronto earlier") happens automatically via LLM context
+- **Structured state** is for data that needs to:
+  - Drive programmatic decisions (qualification routing)
+  - Be passed to external systems (webhooks, Salesforce, analytics)
+  - Persist beyond the conversation
+  - Trigger specific workflows
+
+#### Subtask 1.1.3: Implement state machine transitions ✅ COMPLETED
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 266-281)
 **LiveKit Docs:** `/agents/build/workflows` (session state management), `/agents/build/nodes` (state transitions in lifecycle hooks)
+**Implementation:** `my-app/src/agent.py:106-199`
+
+**Purpose:** Control conversation flow progression and leverage rich discovered context for intelligent state transitions.
 
 ```python
 # State flow: GREETING → DISCOVERY → VALUE_DEMO → QUALIFICATION → NEXT_STEPS → CLOSING
-def transition_state(self, from_state: str, to_state: str):
+def transition_state(self, from_state: str, to_state: str, context: dict = None):
+    """
+    Transition between conversation states with validation.
+
+    Args:
+        from_state: Current state
+        to_state: Target state
+        context: Optional dict with transition context (e.g., discovered signals)
+    """
     valid_transitions = {
         "GREETING": ["DISCOVERY", "FRICTION_RESCUE"],
-        "DISCOVERY": ["VALUE_DEMO", "FRICTION_RESCUE"],
-        # ... etc
+        "DISCOVERY": ["VALUE_DEMO", "QUALIFICATION", "FRICTION_RESCUE"],
+        "VALUE_DEMO": ["QUALIFICATION", "NEXT_STEPS", "FRICTION_RESCUE"],
+        "QUALIFICATION": ["NEXT_STEPS", "VALUE_DEMO"],  # Can loop back for more demo
+        "NEXT_STEPS": ["CLOSING", "QUALIFICATION"],     # Can clarify qualification
+        "FRICTION_RESCUE": ["DISCOVERY", "VALUE_DEMO", "CLOSING"],  # Flexible recovery
+        "CLOSING": []  # Terminal state
     }
+
+    if to_state not in valid_transitions.get(from_state, []):
+        logger.warning(f"Invalid transition: {from_state} → {to_state}")
+        return False
+
+    logger.info(f"State transition: {from_state} → {to_state}")
+
+    # Log rich context if available
+    if context:
+        logger.info(f"Transition context: {context}")
+
+    self.conversation_state = to_state
+    return True
+
+def should_transition_to_qualification(self) -> bool:
+    """
+    Determine if enough context has been gathered to move to qualification.
+
+    Uses richer discovered_signals to make intelligent transition decisions.
+    """
+    # Have we learned enough about their needs?
+    has_use_case = self.discovered_signals.get("use_case") is not None
+    has_pain_points = len(self.discovered_signals.get("pain_points", [])) > 0
+
+    # Have we discovered any qualification signals?
+    has_team_info = self.discovered_signals.get("team_size") is not None
+    has_volume_info = self.discovered_signals.get("monthly_volume") is not None
+    has_integration_needs = len(self.discovered_signals.get("integration_needs", [])) > 0
+
+    # Transition when we have sufficient context
+    return (has_use_case or has_pain_points) and \
+           (has_team_info or has_volume_info or has_integration_needs)
+
+def should_route_to_sales(self) -> bool:
+    """
+    Determine if this lead should be routed to sales vs self-serve.
+
+    Leverages expanded discovered_signals for routing decision.
+    """
+    # Primary qualification criteria (Tier 1)
+    if self.discovered_signals.get("team_size", 0) >= 5:
+        return True
+    if self.discovered_signals.get("monthly_volume", 0) >= 100:
+        return True
+    if "salesforce" in self.discovered_signals.get("integration_needs", []):
+        return True
+    if "hubspot" in self.discovered_signals.get("integration_needs", []):
+        return True
+
+    # Secondary signals that indicate enterprise
+    if self.discovered_signals.get("budget_authority") == "decision_maker" and \
+       self.discovered_signals.get("urgency") == "high":
+        return True
+
+    # Complex use cases indicate enterprise
+    complex_industries = ["healthcare", "finance", "legal"]
+    if self.discovered_signals.get("industry") in complex_industries and \
+       self.discovered_signals.get("team_size", 0) >= 3:
+        return True
+
+    return False
 ```
 
 **Actions:**
-1. Implement state validation logic
-2. Add transition logging
-3. Handle invalid transitions
+1. Implement state validation logic with comprehensive transition map
+2. Add transition logging with rich context
+3. Handle invalid transitions gracefully
+4. Create helper methods that leverage expanded discovered_signals:
+   - `should_transition_to_qualification()` - Uses use_case, pain_points, qualification signals
+   - `should_route_to_sales()` - Uses team_size, volume, integrations, authority, urgency, industry
+5. Add context parameter to transitions for debugging/analytics
+6. Document how richer state enables smarter conversation flow decisions
+
+**State Transition Intelligence:**
+The expanded `discovered_signals` enables context-aware transitions:
+- **Discovery → Qualification**: Only when sufficient use_case/pain_points discovered
+- **Qualification → Next Steps**: Different paths for sales_ready vs self_serve
+- **Routing decisions**: Leverage industry, authority, timeline for better qualification
 
 ### Task 1.2: Configure Voice Pipeline
 **Owner:** Audio Engineer
@@ -525,17 +648,29 @@ async def webhook_send_conversation_event(
     """Track conversation events and qualification signals.
 
     Args:
-        event_type: "qualification|objection|booking|support|discovery"
+        event_type: "qualification|objection|booking|support|discovery|context"
         call_id: UUID
         trialist: {email, company}
         data: {
             qualification_signals: {
+                # Core qualification
                 team_size: int or None,
                 monthly_volume: int or None,
                 integration_needs: list,
                 urgency: str or None,
-                qualification_tier: "sales_ready|nurture|self_serve" or None
+                qualification_tier: "sales_ready|self_serve" or None,
+
+                # Extended business context
+                industry: str or None,
+                location: str or None,
+                use_case: str or None,
+                current_tool: str or None,
+                pain_points: list,
+                decision_timeline: str or None,
+                budget_authority: str or None,
+                team_structure: str or None
             },
+            conversation_notes: list,  # Free-form important context
             intent_signals: list,
             objections: list,
             topics: list
@@ -557,6 +692,8 @@ async def webhook_send_conversation_event(
     # Update agent's internal state with discovered signals
     if event_type == "qualification":
         signals = data.get("qualification_signals", {})
+
+        # Core qualification signals
         if signals.get("team_size"):
             self.discovered_signals["team_size"] = signals["team_size"]
         if signals.get("monthly_volume"):
@@ -568,22 +705,57 @@ async def webhook_send_conversation_event(
         if signals.get("qualification_tier"):
             self.discovered_signals["qualification_tier"] = signals["qualification_tier"]
 
+        # Extended business context signals
+        if signals.get("industry"):
+            self.discovered_signals["industry"] = signals["industry"]
+        if signals.get("location"):
+            self.discovered_signals["location"] = signals["location"]
+        if signals.get("use_case"):
+            self.discovered_signals["use_case"] = signals["use_case"]
+        if signals.get("current_tool"):
+            self.discovered_signals["current_tool"] = signals["current_tool"]
+        if signals.get("pain_points"):
+            self.discovered_signals["pain_points"].extend(signals["pain_points"])
+        if signals.get("decision_timeline"):
+            self.discovered_signals["decision_timeline"] = signals["decision_timeline"]
+        if signals.get("budget_authority"):
+            self.discovered_signals["budget_authority"] = signals["budget_authority"]
+        if signals.get("team_structure"):
+            self.discovered_signals["team_structure"] = signals["team_structure"]
+
+        # Conversation notes (free-form catch-all)
+        if data.get("conversation_notes"):
+            self.conversation_notes.extend(data["conversation_notes"])
+
     if event_type == "discovery":
         discovered = data.get("discovered_needs", [])
         if not hasattr(self, 'discovered_needs'):
             self.discovered_needs = []
         self.discovered_needs.extend(discovered)
 
+    if event_type == "context":
+        # Handle free-form context updates
+        notes = data.get("conversation_notes", [])
+        self.conversation_notes.extend(notes)
+
     # Fire-and-forget async
     return {"logged": True, "event_type": event_type}
 ```
 
 **Actions:**
-1. Create event logging structure
-2. Implement state updates for qualification signals (not scores)
-3. Add structured logging format for discovered signals
-4. Test with various event types and qualification data
-5. Ensure Sarah can pass discovered signals from conversation naturally
+1. Create event logging structure with expanded qualification_signals schema
+2. Implement state updates for all qualification signals (core + extended)
+3. Add handling for conversation_notes (free-form catch-all context)
+4. Add "context" event type for tracking important details that don't fit other categories
+5. Add structured logging format for all discovered signals
+6. Test with various event types and comprehensive qualification data
+7. Ensure Sarah can pass both structured signals and free-form notes naturally
+
+**Note on Extended Signals:**
+- **Core signals** (team_size, volume, integrations) still drive primary qualification
+- **Extended signals** (industry, location, use_case, etc.) enable richer routing and personalization
+- **conversation_notes** captures important context that doesn't fit structured fields
+- All signals are optional - Sarah can log partial data as it's discovered naturally
 
 ---
 
@@ -742,7 +914,7 @@ User: "We're doing about 150-200 per month now."
 
 ## When to Log Qualification Signals
 Call webhook_send_conversation_event with event_type="qualification" when you discover:
-- Team size indicators (10+ users = Tier 1)
+- Team size indicators (5+ users = Tier 1)
 - Document volume (100+ per month = Tier 1)
 - Integration needs (Salesforce, HubSpot, API = Tier 1)
 - Urgency indicators (replacing tool, deadline = elevated priority)
@@ -771,7 +943,7 @@ webhook_send_conversation_event(
 **Actions:**
 1. Document how Sarah should extract signals from user responses
 2. Create mapping between user language and qualification data
-3. Define when qualification tier should be determined (sales_ready, nurture, self_serve)
+3. Define when qualification tier should be determined (sales_ready, self_serve)
 4. Add guidelines for incomplete qualification (partial signals discovered)
 
 **Documentation to add:**
@@ -783,7 +955,7 @@ webhook_send_conversation_event(
 - User mentions "our team of 15" → team_size = 15
 - User says "me and 3 other reps" → team_size = 4
 - User describes workflow with roles → count mentioned roles
-- User mentions departments → likely 10+
+- User mentions departments → likely 5+
 
 **Volume Extraction:**
 - "About 20 per week" → monthly_volume = 80
