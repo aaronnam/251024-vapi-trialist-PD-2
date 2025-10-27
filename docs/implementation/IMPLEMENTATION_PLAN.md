@@ -723,20 +723,32 @@ async def _invoke_calendar_subagent(self, request: str, user_email: str, context
 **Design Principle:** Tool derives most data from agent state - minimize parameters
 
 ```python
-from livekit.agents import function_tool, RunContext
+from livekit.agents import function_tool, RunContext, ToolError
 from datetime import datetime
+from typing import Optional, Dict, Any, Union
 import json
 import logging
 
-@function_tool
-async def log_qualification_signal(
-    self,
-    context: RunContext,
-    signal_type: str,
-    value: any,
-    notes: str = None
-):
-    """Log a discovered qualification signal or important conversation event.
+class PandaDocTrialistAgent(Agent):
+    def __init__(self):
+        super().__init__(instructions=...)
+        # Initialize state tracking
+        self.discovered_signals = {...}  # As defined in Task 1.1.2
+        self.conversation_notes = []
+        # These would be set when conversation starts
+        self.call_id = None
+        self.user_email = None
+        self.company_name = None
+
+    @function_tool()
+    async def log_qualification_signal(
+        self,
+        context: RunContext,
+        signal_type: str,
+        value: Union[str, int, list],
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Log a discovered qualification signal or important conversation event.
 
     This tool automatically derives context from the agent's internal state.
     Use it whenever you discover something important about the user's needs.
