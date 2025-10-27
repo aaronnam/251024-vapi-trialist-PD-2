@@ -138,6 +138,7 @@ DEEPGRAM_API_KEY=your_deepgram_api_key
 #### Subtask 1.1.1: Create PandaDocTrialistAgent class with qualification-aware instructions
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` (Section 8: Qualification Framework)
 **Documentation:** `REQUIREMENTS_MAP.md` - Section 1
+**LiveKit Docs:** `/agents/build/workflows` (Agent class structure, custom instructions), `/agents/build/nodes` (lifecycle hooks: `on_enter`, `on_user_turn_completed`)
 
 ```python
 # Implementation location: my-app/src/agent.py
@@ -208,6 +209,7 @@ with event_type="qualification" and include the discovered signals in the data p
 #### Subtask 1.1.2: Add conversation state management
 **Reference:** `../research/livekit/function-tools.md` - Section 2 (RunContext)
 **Documentation:** LiveKit Agent state management patterns
+**LiveKit Docs:** `/agents/build/workflows` (userdata attribute, state with dataclasses), `/agents/build/nodes` (accessing turn_ctx and ChatContext)
 
 ```python
 def __init__(self):
@@ -231,6 +233,7 @@ def __init__(self):
 
 #### Subtask 1.1.3: Implement state machine transitions
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 266-281)
+**LiveKit Docs:** `/agents/build/workflows` (session state management), `/agents/build/nodes` (state transitions in lifecycle hooks)
 
 ```python
 # State flow: GREETING → DISCOVERY → VALUE_DEMO → QUALIFICATION → NEXT_STEPS → CLOSING
@@ -254,6 +257,7 @@ def transition_state(self, from_state: str, to_state: str):
 #### Subtask 1.2.1: Set up Deepgram STT
 **Reference:** `livekit_voice_pipeline_research.md` - Deepgram Configuration
 **Documentation:** https://docs.livekit.io/agents/models/stt/inference/deepgram/
+**LiveKit Docs:** `/agents/models/stt/plugins/deepgram` (model selection, eager_eot_threshold, keyterms)
 
 ```python
 # Update entrypoint function
@@ -272,6 +276,7 @@ session = AgentSession(
 #### Subtask 1.2.2: Configure ElevenLabs TTS with Rachel voice
 **Reference:** Research document on ElevenLabs integration
 **Documentation:** https://docs.livekit.io/agents/models/tts/inference/elevenlabs/
+**LiveKit Docs:** `/agents/models/tts/plugins/elevenlabs` (voice_id, model, streaming_latency, voice_settings)
 
 ```python
 session = AgentSession(
@@ -287,6 +292,7 @@ session = AgentSession(
 
 #### Subtask 1.2.3: Optimize VAD and turn detection
 **Reference:** `livekit_voice_pipeline_research.md` - VAD Configuration
+**LiveKit Docs:** `/agents/build/audio` (preemptive_generation), `/agents/build/turns` (VAD and turn detection)
 
 ```python
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -310,6 +316,7 @@ session = AgentSession(
 
 #### Subtask 1.3.1: Add TTS fallback to OpenAI
 **Reference:** `/docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (line 69)
+**LiveKit Docs:** `/agents/build/events` (FallbackAdapter for automatic failover)
 
 ```python
 try:
@@ -331,6 +338,7 @@ except Exception as e:
 
 #### Subtask 1.3.2: Implement graceful error recovery
 **Reference:** `REQUIREMENTS_MAP.md` - Section 6
+**LiveKit Docs:** `/agents/build/events` (ErrorEvent handling, recoverable field)
 
 ```python
 # Error handling patterns
@@ -357,6 +365,7 @@ if tool_failed:
 #### Subtask 2.1.1: Implement unleash_search_knowledge tool with Unleash API
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 88-96)
 **Documentation:** `../research/livekit/function-tools.md` - Section 1
+**LiveKit Docs:** `/agents/build/tools` (@function_tool decorator, RunContext, async patterns, ToolError), `/agents/build/external-data` (external API calls)
 
 ```python
 from livekit.agents import function_tool, RunContext
@@ -435,6 +444,7 @@ UNLEASH_BASE_URL=https://api.unleash.com  # Optional, has default
 #### Subtask 2.2.1: Implement calendar_management_agent tool
 **Reference:** LiveKit multi-agent patterns
 **Documentation:** `../research/livekit/function-tools.md` - Section 3 (Sub-agent patterns)
+**LiveKit Docs:** `/agents/build/workflows` (agent handoff via tool returns), `/agents/build/tools` (returning Agent from tools)
 
 ```python
 from livekit.agents import function_tool, RunContext, Agent
@@ -495,6 +505,7 @@ async def _invoke_calendar_subagent(self, request: str, user_email: str, context
 #### Subtask 2.3.1: Implement webhook_send_conversation_event tool
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (lines 136-145)
 **Documentation:** `../research/livekit/function-tools.md` - Section 5 (Error handling)
+**LiveKit Docs:** `/agents/build/events` (event handlers), `/agents/build/external-data` (fire-and-forget async), `/home/server/webhooks` (webhook integration)
 
 ```python
 from livekit.agents import function_tool, RunContext
@@ -888,6 +899,7 @@ class ActiveListening:
 #### Subtask 4.1.1: Create tool test fixtures
 **Reference:** `../research/quick-references/testing-quick-ref.md` - Pattern 1
 **Documentation:** `../research/livekit/testing-framework.md` - Section 4
+**LiveKit Docs:** `/agents/build/testing` (test setup with AgentSession), `/agents/build/tools` (mocking tools)
 
 ```python
 # tests/test_tools.py
@@ -913,6 +925,7 @@ async def agent_session(mock_llm):
 
 #### Subtask 4.1.2: Test knowledge search tool
 **Reference:** `TESTING_INTEGRATION_GUIDE.md` - Tool Testing
+**LiveKit Docs:** `/agents/build/testing` (tool call assertions: is_function_call, is_function_call_output)
 
 ```python
 @pytest.mark.asyncio
@@ -1011,6 +1024,7 @@ async def test_webhook_send_conversation_event_tool(agent_session):
 #### Subtask 4.2.1: Test greeting patterns
 **Reference:** `../research/quick-references/testing-quick-ref.md` - Pattern 2
 **Documentation:** LiveKit testing evaluation framework
+**LiveKit Docs:** `/agents/build/testing` (judge-based evaluation with .judge(), test setup)
 
 ```python
 @pytest.mark.asyncio
@@ -1047,6 +1061,7 @@ async def test_greeting_is_friendly():
 
 #### Subtask 4.2.2: Test prompt-based qualification flow
 **Reference:** `../research/livekit/testing-framework.md` - Section 8
+**LiveKit Docs:** `/agents/build/testing` (multiple turns testing, RunResult structure), `/agents/build/workflows` (userdata for state)
 
 ```python
 @pytest.mark.asyncio
@@ -1114,6 +1129,7 @@ async def test_qualification_signal_extraction():
 
 #### Subtask 4.3.1: Test end-to-end conversation
 **Reference:** `TESTING_INTEGRATION_GUIDE.md` - E2E Testing
+**LiveKit Docs:** `/agents/build/testing` (multi-turn testing, loading history, agent handoff assertions)
 
 ```python
 @pytest.mark.asyncio
@@ -1160,6 +1176,7 @@ async def test_full_conversation_flow():
 #### Subtask 5.1.1: Implement CalendarManagementAgent class
 **Reference:** LiveKit multi-agent architecture patterns
 **Documentation:** https://docs.livekit.io/agents/build/workflows/
+**LiveKit Docs:** `/agents/build/workflows` (extending Agent class, custom instructions, on_enter lifecycle)
 
 ```python
 # Implementation location: my-app/src/calendar_agent.py
@@ -1234,6 +1251,7 @@ GOOGLE_CALENDAR_ID=primary  # Optional, defaults to "primary"
 #### Subtask 5.2.1: Implement check_availability tool
 **Reference:** Google Calendar API Events.list documentation
 **Documentation:** https://developers.google.com/calendar/api/v3/reference/events/list
+**LiveKit Docs:** `/agents/build/tools` (async function tools, error handling with ToolError), `/agents/build/external-data` (external API integration)
 
 ```python
 @function_tool
@@ -1362,6 +1380,7 @@ def _calculate_available_slots(
 #### Subtask 5.2.2: Implement create_appointment tool
 **Reference:** Google Calendar API Events.insert documentation
 **Documentation:** https://developers.google.com/calendar/api/v3/reference/events/insert
+**LiveKit Docs:** `/agents/build/tools` (function tools with complex return values), `/agents/build/external-data` (async operations)
 
 ```python
 @function_tool
@@ -1488,6 +1507,7 @@ async def create_appointment(
 #### Subtask 5.3.1: Define handoff protocol
 **Reference:** LiveKit multi-agent workflow patterns
 **Documentation:** `../research/livekit/function-tools.md` - Section 3
+**LiveKit Docs:** `/agents/build/workflows` (agent handoff, chat_ctx preservation), `/agents/build/tools` (return Agent from tools)
 
 ```python
 # Update to my-app/src/agent.py
@@ -1567,6 +1587,7 @@ class PandaDocTrialistAgent(Agent):
 
 #### Subtask 5.3.2: Implement error handling for sub-agent failures
 **Reference:** `../PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` - Error handling patterns
+**LiveKit Docs:** `/agents/build/tools` (ToolError exception), `/agents/build/events` (error propagation)
 
 ```python
 async def _handle_calendar_error(self, context: RunContext, error: Exception):
@@ -1625,6 +1646,7 @@ def _classify_calendar_error(self, error: Exception) -> str:
 
 #### Subtask 5.4.1: Unit tests for calendar tools
 **Reference:** `../research/quick-references/testing-quick-ref.md` - Tool testing patterns
+**LiveKit Docs:** `/agents/build/testing` (mock_tools helper, testing async tools), `/agents/build/tools` (tool testing patterns)
 
 ```python
 # tests/test_calendar_agent.py
@@ -1741,6 +1763,7 @@ async def test_calendar_error_handling(calendar_agent):
 #### Subtask 6.1.1: Configure LiveKit Cloud
 **Reference:** `my-app/README.md` - Dev Setup
 **Documentation:** https://docs.livekit.io/home/cloud/
+**LiveKit Docs:** `/agents/start/voice-ai` (LiveKit Cloud auth), `/agents/ops/deployment/secrets` (credentials management)
 
 ```bash
 # Set up LiveKit CLI
@@ -1761,6 +1784,7 @@ lk app list
 
 #### Subtask 6.1.2: Set up dependencies
 **Reference:** `my-app/pyproject.toml`
+**LiveKit Docs:** `/agents/start/voice-ai` (dependencies setup), `/agents/ops/deployment/custom` (environment variables)
 
 ```toml
 dependencies = [
@@ -1782,6 +1806,7 @@ dependencies = [
 
 #### Subtask 6.2.1: Test in console mode
 **Reference:** `my-app/README.md` - Run the agent
+**LiveKit Docs:** `/agents/start/voice-ai` (console mode testing), `/agents/build/testing` (debugging verbose output)
 
 ```bash
 # Download models first time
@@ -1799,6 +1824,7 @@ uv run python src/agent.py console
 
 #### Subtask 6.2.2: Test with dev server
 **Reference:** LiveKit development guide
+**LiveKit Docs:** `/agents/start/playground` (web-based testing), `/agents/start/voice-ai` (dev mode)
 
 ```bash
 # Run in dev mode
@@ -1821,6 +1847,7 @@ uv run python src/agent.py dev
 #### Subtask 6.3.1: Dockerize application
 **Reference:** `my-app/Dockerfile`
 **Documentation:** LiveKit deployment guide
+**LiveKit Docs:** `/agents/ops/deployment/builds` (Dockerfile templates, best practices)
 
 ```dockerfile
 FROM python:3.11-slim
@@ -1842,6 +1869,7 @@ CMD ["uv", "run", "python", "src/agent.py", "start"]
 
 #### Subtask 6.3.2: Deploy to LiveKit Cloud
 **Reference:** https://docs.livekit.io/agents/ops/deployment/
+**LiveKit Docs:** `/agents/ops/deployment` (complete deployment workflow), `/agents/ops/deployment/logs` (monitoring), `/agents/build/metrics` (telemetry)
 
 ```bash
 # Deploy agent

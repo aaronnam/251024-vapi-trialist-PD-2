@@ -56,3 +56,63 @@ Important: When modifying core agent behavior such as instructions, tool descrip
 You can make use of the LiveKit CLI (`lk`) for various tasks, with user approval. Installation instructions are available at https://docs.livekit.io/home/cli if needed.
 
 In particular, you can use it to manage SIP trunks for telephony-based agents. Refer to `lk sip --help` for more information.
+
+## Deployment
+
+This agent is deployed to LiveKit Cloud and ready for production use.
+
+**Deployment details:**
+- **Project**: `pd-voice-trialist-4`
+- **Agent ID**: `CA_9b4oemVRtDEm`
+- **LiveKit Cloud URL**: `wss://pd-voice-trialist-4-8xjgyb6d.livekit.cloud`
+
+### Common deployment commands
+
+```bash
+# Deploy a new version (after making code changes)
+lk agent deploy
+
+# Check agent status
+lk agent status
+
+# View deployment logs
+lk agent logs
+
+# View build logs
+lk agent logs --log-type=build
+
+# Restart the agent (without rebuilding)
+lk agent restart
+
+# Rollback to a previous version
+lk agent rollback
+
+# List all deployed versions
+lk agent versions
+
+# Update secrets (e.g., API keys)
+lk agent update-secrets --secrets-file .env.local
+
+# View current secret keys (values are hidden)
+lk agent secrets
+```
+
+### Testing the deployed agent
+
+You can test your deployed agent through:
+- **Agent Playground**: https://cloud.livekit.io/projects/p_/agents
+- **Web frontend**: Connect using the React/Next.js starter
+- **Mobile**: Use iOS, Android, Flutter, or React Native starters
+- **Telephony**: Configure SIP trunks for phone calls
+
+### Local development
+
+To test locally before deploying:
+
+```bash
+# Run in console mode (terminal-based testing)
+uv run python src/agent.py console
+
+# Run in dev mode (for use with frontend/telephony)
+uv run python src/agent.py dev
+```
