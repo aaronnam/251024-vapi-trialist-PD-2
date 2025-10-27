@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from typing import Any, Callable, TypeVar
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -8,19 +10,40 @@ from livekit.agents import (
     JobProcess,
     MetricsCollectedEvent,
     RoomInputOptions,
+    RunContext,
+    ToolError,
     WorkerOptions,
     cli,
+    function_tool,
     metrics,
+    tts,
 )
-from livekit.plugins import noise_cancellation, silero
+from livekit.plugins import elevenlabs, noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+
+# Support both relative and absolute imports
+try:
+    from .error_recovery import (
+        CircuitBreaker,
+        ErrorRecoveryMixin,
+        retry_with_exponential_backoff,
+    )
+except ImportError:
+    from error_recovery import (  # type: ignore
+        CircuitBreaker,
+        ErrorRecoveryMixin,
+        retry_with_exponential_backoff,
+    )
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Type variable for generic retry decorator
+T = TypeVar("T")
 
-class PandaDocTrialistAgent(Agent):
+
+class PandaDocTrialistAgent(Agent, ErrorRecoveryMixin):
     def __init__(self) -> None:
         super().__init__(
             instructions="""You are Sarah, a friendly and knowledgeable Trial Success Specialist at PandaDoc.
@@ -101,7 +124,18 @@ with event_type="qualification" and include the discovered signals in the data p
 
         # Trial context
         self.trial_day = None
-        self.trial_activity = None  # "created_template", "sent_document", "stuck_on_feature"
+        self.trial_activity = (
+            None  # "created_template", "sent_document", "stuck_on_feature"
+        )
+
+        # Circuit breakers for external services (future tools)
+        # These prevent cascading failures and provide graceful degradation
+        self.circuit_breakers: dict[str, CircuitBreaker] = {
+            "amplitude": CircuitBreaker(failure_threshold=3, recovery_timeout=30.0),
+            "salesforce": CircuitBreaker(failure_threshold=3, recovery_timeout=30.0),
+            "chilipiper": CircuitBreaker(failure_threshold=3, recovery_timeout=30.0),
+            "hubspot": CircuitBreaker(failure_threshold=3, recovery_timeout=30.0),
+        }
 
     def transition_state(
         self, from_state: str, to_state: str, context: dict | None = None
@@ -120,7 +154,10 @@ with event_type="qualification" and include the discovered signals in the data p
             "GREETING": ["DISCOVERY", "FRICTION_RESCUE"],
             "DISCOVERY": ["VALUE_DEMO", "QUALIFICATION", "FRICTION_RESCUE"],
             "VALUE_DEMO": ["QUALIFICATION", "NEXT_STEPS", "FRICTION_RESCUE"],
-            "QUALIFICATION": ["NEXT_STEPS", "VALUE_DEMO"],  # Can loop back for more demo
+            "QUALIFICATION": [
+                "NEXT_STEPS",
+                "VALUE_DEMO",
+            ],  # Can loop back for more demo
             "NEXT_STEPS": ["CLOSING", "QUALIFICATION"],  # Can clarify qualification
             "FRICTION_RESCUE": [
                 "DISCOVERY",
@@ -190,13 +227,232 @@ with event_type="qualification" and include the discovered signals in the data p
 
         # Complex use cases indicate enterprise
         complex_industries = ["healthcare", "finance", "legal"]
-        if (
+        return (
             self.discovered_signals.get("industry") in complex_industries
             and self.discovered_signals.get("team_size", 0) >= 3
-        ):
-            return True
+        )
 
-        return False
+    async def call_with_retry_and_circuit_breaker(
+        self,
+        service_name: str,
+        func: Callable[..., T],
+        fallback_response: str | None = None,
+        max_retries: int = 2,
+    ) -> T | str | None:
+        """Call a function with retry logic and circuit breaker protection.
+
+        This method provides production-quality error handling for external service calls:
+        - Circuit breaker prevents cascading failures
+        - Exponential backoff retries transient errors
+        - Graceful fallback when service is unavailable
+
+        Args:
+            service_name: Name of the service (for circuit breaker lookup)
+            func: Async function to call
+            fallback_response: Optional fallback response if all retries fail
+            max_retries: Maximum number of retry attempts (default: 2, voice-optimized)
+
+        Returns:
+            Function result, fallback response, or None
+
+        Example:
+            result = await self.call_with_retry_and_circuit_breaker(
+                service_name="amplitude",
+                func=lambda: fetch_user_data(user_id),
+                fallback_response="I'll continue without that data for now."
+            )
+        """
+        # Get or create circuit breaker for this service
+        if service_name not in self.circuit_breakers:
+            self.circuit_breakers[service_name] = CircuitBreaker()
+
+        circuit_breaker = self.circuit_breakers[service_name]
+
+        # Check if circuit breaker allows the call
+        if not circuit_breaker.is_available():
+            logger.warning(
+                f"Circuit breaker open for {service_name}, using fallback response"
+            )
+            return fallback_response
+
+        try:
+            # Attempt call with retry logic (shorter delays for voice AI)
+            result = await retry_with_exponential_backoff(
+                func=func,
+                max_retries=max_retries,
+                base_delay=0.5,  # Voice-optimized: shorter initial delay
+                max_delay=3.0,  # Voice-optimized: shorter max delay
+            )
+
+            # Mark success in circuit breaker
+            circuit_breaker.call_succeeded()
+            return result
+
+        except Exception as e:
+            # Mark failure in circuit breaker
+            circuit_breaker.call_failed()
+
+            logger.error(
+                f"Failed to call {service_name} after retries: {e}", exc_info=True
+            )
+
+            # Return fallback response if provided
+            return fallback_response
+
+    async def handle_tool_with_error_recovery(
+        self,
+        context: RunContext,
+        tool_name: str,
+        tool_func: Callable[..., T],
+        error_type: str = "tool_failure",
+    ) -> T:
+        """Wrap tool execution with graceful error handling.
+
+        This method ensures tools fail gracefully with natural language responses
+        and preserve conversation state even when errors occur.
+
+        Args:
+            context: RunContext from the tool
+            tool_name: Name of the tool for logging
+            tool_func: Async function that executes the tool logic
+            error_type: Type of error for response generation
+
+        Returns:
+            Tool result
+
+        Raises:
+            ToolError: With user-friendly message if tool fails
+
+        Example:
+            return await self.handle_tool_with_error_recovery(
+                context=context,
+                tool_name="lookup_user_data",
+                tool_func=lambda: self._fetch_user_data(user_id),
+                error_type="connection_issue"
+            )
+        """
+        try:
+            # Preserve state before attempting tool call
+            state_snapshot = {
+                "signals": dict(self.discovered_signals),
+                "notes": list(self.conversation_notes),
+                "state": self.conversation_state,
+            }
+
+            # Execute tool
+            result = await tool_func()
+
+            # Tool succeeded, return result
+            return result
+
+        except asyncio.TimeoutError:
+            # Handle timeout specifically
+            logger.warning(f"Tool {tool_name} timed out")
+
+            # Restore state
+            self.preserve_conversation_state(state_snapshot)
+
+            # Generate natural error response
+            error_msg = self.get_error_response("timeout")
+
+            raise ToolError(error_msg) from None
+
+        except Exception as e:
+            # Handle general errors
+            logger.error(f"Tool {tool_name} failed: {e}", exc_info=True)
+
+            # Restore state
+            self.preserve_conversation_state(state_snapshot)
+
+            # Generate natural error response
+            error_msg = self.get_error_response(error_type)
+
+            raise ToolError(error_msg) from e
+
+    # ========================================================================
+    # Example Tool Implementations with Error Recovery
+    # ========================================================================
+    # These demonstrate the pattern for future tool implementations
+
+    @function_tool()
+    async def example_tool_with_timeout(
+        self,
+        context: RunContext,
+        query: str,
+    ) -> str:
+        """Example tool showing timeout handling.
+
+        This demonstrates how to implement timeout protection for long-running operations.
+        When implementing real tools, replace this with actual API calls.
+
+        Args:
+            query: The query to process
+        """
+        return await self.handle_tool_with_error_recovery(
+            context=context,
+            tool_name="example_tool_with_timeout",
+            tool_func=lambda: self._example_long_running_query(query),
+            error_type="timeout",
+        )
+
+    async def _example_long_running_query(self, query: str) -> str:
+        """Internal method with timeout protection.
+
+        This would be replaced with actual API calls in production.
+        """
+        try:
+            # Simulate long-running operation with timeout
+            result = await asyncio.wait_for(
+                self._simulate_slow_api_call(query), timeout=5.0
+            )
+            return result
+        except asyncio.TimeoutError as e:
+            raise asyncio.TimeoutError(
+                f"Query '{query}' timed out after 5 seconds"
+            ) from e
+
+    async def _simulate_slow_api_call(self, query: str) -> str:
+        """Simulate a slow API call for testing."""
+        await asyncio.sleep(1.0)  # Simulate network latency
+        return f"Results for: {query}"
+
+    @function_tool()
+    async def example_tool_with_circuit_breaker(
+        self,
+        context: RunContext,
+        user_id: str,
+    ) -> str:
+        """Example tool showing circuit breaker usage.
+
+        This demonstrates how to protect against cascading failures when
+        external services become unavailable. The circuit breaker opens after
+        repeated failures, preventing additional load on struggling services.
+
+        Args:
+            user_id: User ID to look up
+        """
+        result = await self.call_with_retry_and_circuit_breaker(
+            service_name="amplitude",
+            func=lambda: self._fetch_example_user_data(user_id),
+            fallback_response="I'll continue helping you without that user data.",
+            max_retries=2,
+        )
+
+        if isinstance(result, str):
+            # Fallback response was returned
+            return result
+
+        # Normal response with data
+        return f"Found user data: {result}"
+
+    async def _fetch_example_user_data(self, user_id: str) -> dict[str, Any]:
+        """Internal method to fetch user data.
+
+        This would be replaced with actual API calls in production.
+        """
+        # Simulate API call
+        await asyncio.sleep(0.5)
+        return {"user_id": user_id, "status": "active"}
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
@@ -227,6 +483,31 @@ async def entrypoint(ctx: JobContext):
         "room": ctx.room.name,
     }
 
+    # TTS Fallback Configuration
+    # Using FallbackAdapter to ensure reliable speech synthesis
+    # Primary: ElevenLabs Turbo v2.5 with Rachel voice (high quality, natural speech)
+    # Fallback: OpenAI TTS tts-1 with nova voice (reliable backup)
+    logger.info(
+        "Initializing TTS with fallback: ElevenLabs (primary) -> OpenAI (fallback)"
+    )
+
+    tts_provider = tts.FallbackAdapter(
+        [
+            # Primary TTS: ElevenLabs Turbo v2.5 with Rachel voice
+            # - High quality, natural-sounding voice
+            # - Low latency for conversational AI
+            elevenlabs.TTS(
+                model="eleven_turbo_v2_5",
+                voice="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
+            ),
+            # Fallback TTS: OpenAI TTS via LiveKit Inference
+            # - Reliable backup when ElevenLabs is unavailable
+            # - Nova voice provides warm, engaging tone
+            # - Using LiveKit Inference (no plugin needed, automatically configured)
+            "openai/tts-1:nova",
+        ]
+    )
+
     # Set up a voice AI pipeline using OpenAI, ElevenLabs, Deepgram, and the LiveKit turn detector
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
@@ -238,8 +519,8 @@ async def entrypoint(ctx: JobContext):
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm="openai/gpt-4.1-mini",
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts="elevenlabs/eleven_turbo_v2_5:21m00Tcm4TlvDq8ikWAM",  # Rachel voice, Turbo v2.5
+        # Using FallbackAdapter for reliability: ElevenLabs (primary) with OpenAI (fallback)
+        tts=tts_provider,
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
         #
@@ -279,6 +560,32 @@ async def entrypoint(ctx: JobContext):
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
+
+    # Error handling for TTS and other components
+    # Logs when fallback mechanisms are triggered or unrecoverable errors occur
+    @session.on("error")
+    def _on_error(event):
+        """Handle errors from STT, LLM, TTS, or other components.
+
+        The FallbackAdapter automatically handles recoverable errors by switching
+        to backup providers. This handler logs both recoverable and unrecoverable
+        errors for monitoring and debugging.
+        """
+        error = event.error
+        source = type(event.source).__name__
+
+        if error.recoverable:
+            # Recoverable error - FallbackAdapter will handle automatically
+            logger.warning(
+                f"TTS/STT/LLM error (recoverable, switching to fallback): "
+                f"source={source}, error={error}"
+            )
+        else:
+            # Unrecoverable error - all providers failed
+            logger.error(
+                f"TTS/STT/LLM error (unrecoverable, all providers failed): "
+                f"source={source}, error={error}"
+            )
 
     async def log_usage():
         summary = usage_collector.get_summary()

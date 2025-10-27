@@ -469,9 +469,10 @@ The current configuration follows best practices:
 **Owner:** Reliability Engineer
 **Estimate:** 2 hours
 
-#### Subtask 1.3.1: Add TTS fallback to OpenAI
+#### Subtask 1.3.1: Add TTS fallback to OpenAI ✅ COMPLETED
 **Reference:** `/docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` (line 69)
 **LiveKit Docs:** `/agents/build/events` (FallbackAdapter for automatic failover)
+**Implementation:** `my-app/src/agent.py:240-268` (FallbackAdapter with ElevenLabs primary, OpenAI fallback)
 
 ```python
 try:
@@ -491,9 +492,10 @@ except Exception as e:
 3. Log fallback usage
 4. Test fallback scenarios
 
-#### Subtask 1.3.2: Implement graceful error recovery
+#### Subtask 1.3.2: Implement graceful error recovery ✅ COMPLETED
 **Reference:** `REQUIREMENTS_MAP.md` - Section 6
 **LiveKit Docs:** `/agents/build/events` (ErrorEvent handling, recoverable field)
+**Implementation:** `my-app/src/error_recovery.py` (CircuitBreaker, retry logic, ErrorRecoveryMixin), integrated in `agent.py:23-38,286-398`
 
 ```python
 # Error handling patterns
@@ -631,15 +633,94 @@ class PandaDocTrialistAgent(Agent):
 **Actions:**
 1. Set up Unleash API credentials in environment
 2. Implement API client with proper authentication
-3. Add timeout and error handling
-4. Create fallback responses for API failures
-5. Test with various query types
+3. Add error handling using ToolError
+4. Create helper method `_determine_next_action` as class method
+5. Test with various query types and response formats
 
 **Environment Variables Required:**
 ```bash
 UNLEASH_API_KEY=your_api_key_here
 UNLEASH_BASE_URL=https://api.unleash.com  # Optional, has default
 ```
+
+**Implementation Note:** This tool should be implemented as a method of `PandaDocTrialistAgent` class, not as a standalone function.
+
+#### Subtask 2.1.2: Test unleash_search_knowledge tool
+**Reference:** LiveKit Testing Framework - https://docs.livekit.io/agents/build/testing/
+**Estimate:** 30 minutes
+
+Create a lightweight test file `tests/test_unleash_tool.py`:
+
+```python
+import pytest
+from livekit.agents import AgentSession, inference, mock_tools
+from agent import PandaDocTrialistAgent
+
+@pytest.mark.asyncio
+async def test_unleash_search_basic():
+    """Test basic knowledge search returns actionable response."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(PandaDocTrialistAgent())
+        result = await session.run(user_input="How do I create templates?")
+
+        # Verify tool was called with correct parameters
+        result.expect.next_event().is_function_call(
+            name="unleash_search_knowledge",
+            arguments={"query": "How do I create templates?"}
+        )
+
+        # Verify tool returns structured response
+        result.expect.next_event().is_function_call_output()
+
+        # Verify agent provides helpful response
+        await result.expect.next_event().is_message(
+            role="assistant"
+        ).judge(llm, intent="Provides clear guidance on creating templates")
+
+@pytest.mark.asyncio
+async def test_unleash_search_error_handling():
+    """Test graceful handling when API fails."""
+    with mock_tools(
+        PandaDocTrialistAgent,
+        {"unleash_search_knowledge": lambda: RuntimeError("API timeout")}
+    ):
+        async with (
+            inference.LLM(model="openai/gpt-4o-mini") as llm,
+            AgentSession(llm=llm) as session,
+        ):
+            await session.start(PandaDocTrialistAgent())
+            result = await session.run(user_input="What pricing plans exist?")
+
+            # Verify agent handles error gracefully
+            await result.expect.contains_message(
+                role="assistant"
+            ).judge(llm, intent="Offers alternative help without exposing technical error")
+
+@pytest.mark.asyncio
+async def test_unleash_response_format():
+    """Test concise vs detailed response format."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(PandaDocTrialistAgent())
+
+        # Test that default is concise
+        result = await session.run(user_input="What integrations exist?")
+
+        # Check tool call has default response_format
+        event = result.expect.next_event().is_function_call(name="unleash_search_knowledge")
+        assert event.item.arguments.get("response_format", "concise") == "concise"
+```
+
+**Actions:**
+1. Create test file with 3 focused test cases
+2. Mock Unleash API for error testing
+3. Use judge() to verify response quality
+4. Run with: `pytest tests/test_unleash_tool.py -v`
 
 ### Task 2.2: Calendar Sub-Agent Tool
 **Owner:** Integration Engineer
@@ -712,6 +793,83 @@ async def _invoke_calendar_subagent(self, request: str, user_email: str, context
 
 **Note:** The Google Calendar sub-agent implementation is part of v1 scope. Full implementation details are in Epic 5 below.
 
+#### Subtask 2.2.2: Test calendar_management_agent tool
+**Reference:** LiveKit Testing Framework - https://docs.livekit.io/agents/build/testing/
+**Estimate:** 30 minutes
+
+Create a lightweight test file `tests/test_calendar_tool.py`:
+
+```python
+import pytest
+from livekit.agents import AgentSession, inference
+from agent import PandaDocTrialistAgent
+
+@pytest.mark.asyncio
+async def test_calendar_availability_check():
+    """Test calendar tool correctly identifies availability check requests."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(PandaDocTrialistAgent())
+        result = await session.run(user_input="Are you free for a demo tomorrow at 2pm?")
+
+        # Verify tool was called for availability check
+        result.expect.next_event().is_function_call(
+            name="calendar_management_agent",
+            arguments={
+                "request": "Are you free for a demo tomorrow at 2pm?",
+                "user_email": None
+            }
+        )
+
+        # Verify response indicates calendar checking
+        await result.expect.contains_message(
+            role="assistant"
+        ).judge(llm, intent="Confirms availability or suggests alternative times")
+
+@pytest.mark.asyncio
+async def test_calendar_booking_with_email():
+    """Test calendar tool handles booking requests with email."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(PandaDocTrialistAgent())
+        result = await session.run(
+            user_input="Book a demo for next Tuesday 3pm. My email is sarah@company.com"
+        )
+
+        # Verify tool extracts email and booking request
+        event = result.expect.next_event().is_function_call(name="calendar_management_agent")
+        assert "sarah@company.com" in str(event.item.arguments.get("user_email", ""))
+        assert "Tuesday" in event.item.arguments.get("request", "")
+
+@pytest.mark.asyncio
+async def test_calendar_ambiguous_request():
+    """Test calendar tool handles vague scheduling requests."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        await session.start(PandaDocTrialistAgent())
+        result = await session.run(user_input="I'd like to schedule some time to chat")
+
+        # Verify tool is called even with vague request
+        result.expect.next_event().is_function_call(name="calendar_management_agent")
+
+        # Verify agent asks clarifying questions
+        await result.expect.contains_message(
+            role="assistant"
+        ).judge(llm, intent="Asks for preferred time or email for scheduling")
+```
+
+**Actions:**
+1. Create test file with 3 calendar scenarios
+2. Test availability checking vs booking logic
+3. Verify email extraction from natural language
+4. Run with: `pytest tests/test_calendar_tool.py -v`
+
 ### Task 2.3: Conversation Event Tracking
 **Owner:** Analytics Engineer
 **Estimate:** 2 hours
@@ -774,57 +932,65 @@ class PandaDocTrialistAgent(Agent):
     elif signal_type == "current_tool":
         self.discovered_signals["current_tool"] = value
 
-    # Auto-determine qualification tier based on current signals
-    qualification_tier = self._determine_qualification_tier()
+        # Auto-determine qualification tier based on current signals
+        qualification_tier = self._determine_qualification_tier()
 
-    # Build event payload from agent state (not parameters)
-    event_data = {
-        "event_type": "qualification_signal",
-        "call_id": self.call_id,  # Derived from agent state
-        "timestamp": datetime.now().isoformat(),
-        "trialist": {
-            "email": self.user_email,  # From agent state
-            "company": self.company_name  # From agent state
-        },
-        "signal": {
-            "type": signal_type,
-            "value": value,
-            "notes": notes,
-            "qualification_tier": qualification_tier,
-            "all_signals": self.discovered_signals  # Include full context
+        # Build event payload from agent state (not parameters)
+        # Use context.userdata for session-specific data if needed
+        call_id = self.call_id or context.userdata.get("call_id", "unknown")
+        user_email = self.user_email or context.userdata.get("user_email", "unknown")
+        company_name = self.company_name or context.userdata.get("company_name", "unknown")
+
+        event_data = {
+            "event_type": "qualification_signal",
+            "call_id": call_id,
+            "timestamp": datetime.now().isoformat(),
+            "trialist": {
+                "email": user_email,
+                "company": company_name
+            },
+            "signal": {
+                "type": signal_type,
+                "value": value,
+                "notes": notes,
+                "qualification_tier": qualification_tier,
+                "all_signals": self.discovered_signals  # Include full context
+            }
         }
-    }
 
-    # Log event for analytics
-    logger = logging.getLogger("analytics")
-    logger.info(f"Qualification signal: {signal_type}={value}")
+        # Log event for analytics
+        logger = logging.getLogger("analytics")
+        logger.info(f"Qualification signal: {signal_type}={value}")
 
-    # Fire-and-forget async webhook
-    # Note: Actual webhook implementation would go here
-    return {"logged": True, "signal": signal_type}
+        # Fire-and-forget async webhook
+        # Note: Actual webhook implementation would go here
+        return {"logged": True, "signal": signal_type}
 
-def _determine_qualification_tier(self) -> str:
-    """Auto-determine qualification tier from discovered signals."""
-    # Tier 1: Sales-ready
-    if self.discovered_signals.get("team_size", 0) >= 5:
-        return "sales_ready"
-    if self.discovered_signals.get("monthly_volume", 0) >= 100:
-        return "sales_ready"
-    if "salesforce" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
-        return "sales_ready"
-    if "hubspot" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
-        return "sales_ready"
+    def _determine_qualification_tier(self) -> str:
+        """Auto-determine qualification tier from discovered signals."""
+        # Tier 1: Sales-ready
+        if self.discovered_signals.get("team_size", 0) >= 5:
+            return "sales_ready"
+        if self.discovered_signals.get("monthly_volume", 0) >= 100:
+            return "sales_ready"
+        if "salesforce" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
+            return "sales_ready"
+        if "hubspot" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
+            return "sales_ready"
 
-    # Otherwise self-serve
-    return "self_serve" if any(self.discovered_signals.values()) else "unknown"
+        # Otherwise self-serve
+        return "self_serve" if any(self.discovered_signals.values()) else "unknown"
 ```
 
 **Actions:**
-1. Implement simplified tool that derives data from agent state
-2. Add automatic qualification tier determination
-3. Create single, simple tool interface for logging any signal
-4. Test that tool correctly updates internal state
-5. Verify webhook fires with complete context
+1. Initialize agent state variables (call_id, user_email, company_name) in agent's `__init__` or from context
+2. Implement simplified tool that derives data from agent state
+3. Add automatic qualification tier determination as class method
+4. Create single, simple tool interface for logging any signal
+5. Test that tool correctly updates internal state
+6. Verify webhook fires with complete context
+
+**State Initialization Note:** The agent should set `self.call_id`, `self.user_email`, and `self.company_name` when a conversation begins, either from the initial context or via `context.userdata`.
 
 **Key Improvements from Anthropic Guide:**
 - **Simplified interface:** Single tool with 3 parameters instead of complex nested structures
@@ -832,7 +998,107 @@ def _determine_qualification_tier(self) -> str:
 - **Automatic qualification:** Tool determines qualification tier automatically
 - **Meaningful context:** Returns simple confirmation, not technical details
 
-### Epic 2 Summary: Tool Design Principles Applied
+#### Subtask 2.3.2: Test log_qualification_signal tool
+**Reference:** LiveKit Testing Framework - https://docs.livekit.io/agents/build/testing/
+**Estimate:** 30 minutes
+
+Create a lightweight test file `tests/test_qualification_tool.py`:
+
+```python
+import pytest
+from livekit.agents import AgentSession, inference
+from agent import PandaDocTrialistAgent
+
+@pytest.mark.asyncio
+async def test_qualification_team_size_signal():
+    """Test team size discovery and automatic tier determination."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        agent = PandaDocTrialistAgent()
+        await session.start(agent)
+
+        # Simulate discovering team size
+        result = await session.run(user_input="We have 12 sales reps using the system")
+
+        # Verify tool logs team size signal
+        event = result.expect.contains_function_call(name="log_qualification_signal")
+        if event:
+            assert event.item.arguments.get("signal_type") == "team_size"
+            assert event.item.arguments.get("value") == 12
+
+        # Verify state was updated
+        assert agent.discovered_signals.get("team_size") == 12
+        assert agent._determine_qualification_tier() == "sales_ready"
+
+@pytest.mark.asyncio
+async def test_qualification_integration_signal():
+    """Test integration need discovery marks as sales-ready."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        agent = PandaDocTrialistAgent()
+        await session.start(agent)
+
+        result = await session.run(user_input="This needs to sync with our Salesforce CRM")
+
+        # Verify Salesforce integration is logged
+        event = result.expect.contains_function_call(name="log_qualification_signal")
+        if event:
+            assert event.item.arguments.get("signal_type") == "integration"
+            assert "salesforce" in str(event.item.arguments.get("value", "")).lower()
+
+        # Verify qualification tier
+        assert "salesforce" in [i.lower() for i in agent.discovered_signals.get("integration_needs", [])]
+        assert agent._determine_qualification_tier() == "sales_ready"
+
+@pytest.mark.asyncio
+async def test_qualification_state_persistence():
+    """Test multiple signals accumulate in agent state."""
+    async with (
+        inference.LLM(model="openai/gpt-4o-mini") as llm,
+        AgentSession(llm=llm) as session,
+    ):
+        agent = PandaDocTrialistAgent()
+        await session.start(agent)
+
+        # First signal: team size
+        await session.run(user_input="Our team has 8 people")
+
+        # Second signal: volume
+        result = await session.run(user_input="We send about 150 proposals monthly")
+
+        # Verify both signals are in state
+        assert agent.discovered_signals.get("team_size") == 8
+        assert agent.discovered_signals.get("monthly_volume") == 150
+
+        # Verify qualification tier (volume > 100 = sales_ready)
+        assert agent._determine_qualification_tier() == "sales_ready"
+
+        # Verify tool output includes all signals
+        event = result.expect.contains_function_call(name="log_qualification_signal")
+        if event and hasattr(event, 'output'):
+            # The event payload should include all_signals with both values
+            assert agent.discovered_signals.get("team_size") == 8
+            assert agent.discovered_signals.get("monthly_volume") == 150
+```
+
+**Actions:**
+1. Create test file with state tracking tests
+2. Verify qualification tier auto-determination
+3. Test state persistence across multiple calls
+4. Run with: `pytest tests/test_qualification_tool.py -v`
+
+### Epic 2 Summary: LiveKit-Compatible Tool Implementation
+
+**Important LiveKit Framework Requirements:**
+1. All tools must be async methods with `@function_tool()` decorator (with parentheses)
+2. `context: RunContext` is always the second parameter after `self`
+3. Type hints are required for all parameters
+4. Use `ToolError` for clean error propagation to LLM
+5. Tools are instance methods of the Agent class, not standalone functions
 
 Based on the Anthropic guide, these v1 tools follow key principles:
 
