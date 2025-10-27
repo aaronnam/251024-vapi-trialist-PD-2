@@ -529,33 +529,43 @@ if tool_failed:
 **Design Principle:** Tool consolidation - This tool should handle search AND provide actionable next steps
 
 ```python
-from livekit.agents import function_tool, RunContext
+from livekit.agents import function_tool, RunContext, ToolError
 import os
 import httpx
+from typing import Optional, Dict, Any
 
-@function_tool
-async def unleash_search_knowledge(self, context: RunContext, query: str, category: str = None, response_format: str = "concise"):
-    """Search PandaDoc knowledge base and provide actionable guidance.
+class PandaDocTrialistAgent(Agent):
+    # ... other agent code ...
 
-    Use this tool when the user asks about PandaDoc features, pricing, integrations, or needs help.
-    This tool both searches for information AND suggests next steps.
+    @function_tool()
+    async def unleash_search_knowledge(
+        self,
+        context: RunContext,
+        query: str,
+        category: Optional[str] = None,
+        response_format: str = "concise"
+    ) -> Dict[str, Any]:
+        """Search PandaDoc knowledge base and provide actionable guidance.
 
-    Args:
-        query: Natural language question about PandaDoc
-        category: Optional - "features", "pricing", "integrations", "troubleshooting"
-        response_format: "concise" for essential info, "detailed" for comprehensive results
-    """
-    # Add "thinking" filler
-    await context.llm.say("Let me find that for you...")
+        Use this tool when the user asks about PandaDoc features, pricing, integrations, or needs help.
+        This tool both searches for information AND suggests next steps.
 
-    try:
-        # Connect to Unleash API
-        unleash_api_key = os.getenv("UNLEASH_API_KEY")
-        unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://api.unleash.com")
+        Args:
+            query: Natural language question about PandaDoc
+            category: Optional - "features", "pricing", "integrations", "troubleshooting"
+            response_format: "concise" for essential info, "detailed" for comprehensive results
+        """
+        # Add "thinking" filler
+        await context.llm.say("Let me find that for you...")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{unleash_base_url}/v1/search",
+        try:
+            # Connect to Unleash API
+            unleash_api_key = os.getenv("UNLEASH_API_KEY")
+            unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://api.unleash.com")
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{unleash_base_url}/v1/search",
                 headers={
                     "Authorization": f"Bearer {unleash_api_key}",
                     "Content-Type": "application/json"
@@ -586,37 +596,36 @@ async def unleash_search_knowledge(self, context: RunContext, query: str, catego
                 "related_topics": results.get("related", [])
             }
 
-    except httpx.TimeoutException:
-        # Specific, actionable error message for timeout
-        await context.llm.say("The knowledge base is taking longer than expected. Let me help you directly...")
-        return {
-            "answer": "I can walk you through this myself. What specific part would you like to start with?",
-            "action": "offer_direct_help",
-            "found": False
-        }
-    except Exception as e:
-        # Graceful fallback with actionable next steps
-        await context.llm.say("I'll help you another way...")
-        return {
-            "answer": "I can connect you with our support team or walk you through common solutions.",
-            "action": "offer_alternatives",
-            "found": False
-        }
+        except httpx.TimeoutException:
+            # Use ToolError for clean error handling
+            raise ToolError(
+                "The knowledge base is taking longer than expected. "
+                "I can walk you through this myself - what specific part would you like to start with?"
+            )
+        except Exception as e:
+            # Log the actual error for debugging
+            import logging
+            logging.error(f"Unleash API error: {e}")
+            # Return graceful fallback
+            raise ToolError(
+                "I'll help you another way. I can connect you with our support team "
+                "or walk you through common solutions."
+            )
 
-def _determine_next_action(self, query: str, results: dict) -> str:
-    """Determine the best next action based on query and results."""
-    if not results.get("results"):
-        return "offer_human_help"
+    def _determine_next_action(self, query: str, results: dict) -> str:
+        """Determine the best next action based on query and results."""
+        if not results.get("results"):
+            return "offer_human_help"
 
-    query_lower = query.lower()
-    if "how" in query_lower or "setup" in query_lower:
-        return "offer_walkthrough"
-    elif "pricing" in query_lower or "cost" in query_lower:
-        return "discuss_roi"
-    elif "integration" in query_lower:
-        return "check_specific_integration"
-    else:
-        return "clarify_needs"
+        query_lower = query.lower()
+        if "how" in query_lower or "setup" in query_lower:
+            return "offer_walkthrough"
+        elif "pricing" in query_lower or "cost" in query_lower:
+            return "discuss_roi"
+        elif "integration" in query_lower:
+            return "check_specific_integration"
+        else:
+            return "clarify_needs"
 ```
 
 **Actions:**
@@ -644,15 +653,19 @@ UNLEASH_BASE_URL=https://api.unleash.com  # Optional, has default
 
 ```python
 from livekit.agents import function_tool, RunContext, Agent
+from typing import Optional, Dict, Any
 
-@function_tool
-async def calendar_management_agent(
-    self,
-    context: RunContext,
-    request: str,
-    user_email: str = None
-):
-    """Handle all calendar operations - check availability AND book meetings.
+class PandaDocTrialistAgent(Agent):
+    # ... other agent code ...
+
+    @function_tool()
+    async def calendar_management_agent(
+        self,
+        context: RunContext,
+        request: str,
+        user_email: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Handle all calendar operations - check availability AND book meetings.
 
     This single tool consolidates all calendar operations. Use it when the user wants to:
     - Check when they're available
@@ -733,86 +746,98 @@ async def log_qualification_signal(
         value: The actual value discovered (e.g., 12 for team_size, "Salesforce" for integration)
         notes: Optional context about how/why this was discovered
     """
-    # Build event payload
+    # Update agent's internal state first
+    if signal_type == "team_size":
+        self.discovered_signals["team_size"] = value
+    elif signal_type == "volume":
+        self.discovered_signals["monthly_volume"] = value
+    elif signal_type == "integration":
+        self.discovered_signals["integration_needs"].append(value)
+    elif signal_type == "urgency":
+        self.discovered_signals["urgency"] = value
+    elif signal_type == "pain_point":
+        self.discovered_signals["pain_points"].append(value)
+    elif signal_type == "use_case":
+        self.discovered_signals["use_case"] = value
+    elif signal_type == "current_tool":
+        self.discovered_signals["current_tool"] = value
+
+    # Auto-determine qualification tier based on current signals
+    qualification_tier = self._determine_qualification_tier()
+
+    # Build event payload from agent state (not parameters)
     event_data = {
-        "event_type": event_type,
-        "call_id": call_id,
+        "event_type": "qualification_signal",
+        "call_id": self.call_id,  # Derived from agent state
         "timestamp": datetime.now().isoformat(),
-        "trialist": trialist,
-        "data": data
+        "trialist": {
+            "email": self.user_email,  # From agent state
+            "company": self.company_name  # From agent state
+        },
+        "signal": {
+            "type": signal_type,
+            "value": value,
+            "notes": notes,
+            "qualification_tier": qualification_tier,
+            "all_signals": self.discovered_signals  # Include full context
+        }
     }
 
     # Log event for analytics
     logger = logging.getLogger("analytics")
-    logger.info(f"Conversation event: {json.dumps(event_data)}")
+    logger.info(f"Qualification signal: {signal_type}={value}")
 
-    # Update agent's internal state with discovered signals
-    if event_type == "qualification":
-        signals = data.get("qualification_signals", {})
+    # Fire-and-forget async webhook
+    # Note: Actual webhook implementation would go here
+    return {"logged": True, "signal": signal_type}
 
-        # Core qualification signals
-        if signals.get("team_size"):
-            self.discovered_signals["team_size"] = signals["team_size"]
-        if signals.get("monthly_volume"):
-            self.discovered_signals["monthly_volume"] = signals["monthly_volume"]
-        if signals.get("integration_needs"):
-            self.discovered_signals["integration_needs"].extend(signals["integration_needs"])
-        if signals.get("urgency"):
-            self.discovered_signals["urgency"] = signals["urgency"]
-        if signals.get("qualification_tier"):
-            self.discovered_signals["qualification_tier"] = signals["qualification_tier"]
+def _determine_qualification_tier(self) -> str:
+    """Auto-determine qualification tier from discovered signals."""
+    # Tier 1: Sales-ready
+    if self.discovered_signals.get("team_size", 0) >= 5:
+        return "sales_ready"
+    if self.discovered_signals.get("monthly_volume", 0) >= 100:
+        return "sales_ready"
+    if "salesforce" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
+        return "sales_ready"
+    if "hubspot" in [i.lower() for i in self.discovered_signals.get("integration_needs", [])]:
+        return "sales_ready"
 
-        # Extended business context signals
-        if signals.get("industry"):
-            self.discovered_signals["industry"] = signals["industry"]
-        if signals.get("location"):
-            self.discovered_signals["location"] = signals["location"]
-        if signals.get("use_case"):
-            self.discovered_signals["use_case"] = signals["use_case"]
-        if signals.get("current_tool"):
-            self.discovered_signals["current_tool"] = signals["current_tool"]
-        if signals.get("pain_points"):
-            self.discovered_signals["pain_points"].extend(signals["pain_points"])
-        if signals.get("decision_timeline"):
-            self.discovered_signals["decision_timeline"] = signals["decision_timeline"]
-        if signals.get("budget_authority"):
-            self.discovered_signals["budget_authority"] = signals["budget_authority"]
-        if signals.get("team_structure"):
-            self.discovered_signals["team_structure"] = signals["team_structure"]
-
-        # Conversation notes (free-form catch-all)
-        if data.get("conversation_notes"):
-            self.conversation_notes.extend(data["conversation_notes"])
-
-    if event_type == "discovery":
-        discovered = data.get("discovered_needs", [])
-        if not hasattr(self, 'discovered_needs'):
-            self.discovered_needs = []
-        self.discovered_needs.extend(discovered)
-
-    if event_type == "context":
-        # Handle free-form context updates
-        notes = data.get("conversation_notes", [])
-        self.conversation_notes.extend(notes)
-
-    # Fire-and-forget async
-    return {"logged": True, "event_type": event_type}
+    # Otherwise self-serve
+    return "self_serve" if any(self.discovered_signals.values()) else "unknown"
 ```
 
 **Actions:**
-1. Create event logging structure with expanded qualification_signals schema
-2. Implement state updates for all qualification signals (core + extended)
-3. Add handling for conversation_notes (free-form catch-all context)
-4. Add "context" event type for tracking important details that don't fit other categories
-5. Add structured logging format for all discovered signals
-6. Test with various event types and comprehensive qualification data
-7. Ensure Sarah can pass both structured signals and free-form notes naturally
+1. Implement simplified tool that derives data from agent state
+2. Add automatic qualification tier determination
+3. Create single, simple tool interface for logging any signal
+4. Test that tool correctly updates internal state
+5. Verify webhook fires with complete context
 
-**Note on Extended Signals:**
-- **Core signals** (team_size, volume, integrations) still drive primary qualification
-- **Extended signals** (industry, location, use_case, etc.) enable richer routing and personalization
-- **conversation_notes** captures important context that doesn't fit structured fields
-- All signals are optional - Sarah can log partial data as it's discovered naturally
+**Key Improvements from Anthropic Guide:**
+- **Simplified interface:** Single tool with 3 parameters instead of complex nested structures
+- **Derives from state:** Tool pulls data from agent's internal state rather than requiring it as parameters
+- **Automatic qualification:** Tool determines qualification tier automatically
+- **Meaningful context:** Returns simple confirmation, not technical details
+
+### Epic 2 Summary: Tool Design Principles Applied
+
+Based on the Anthropic guide, these v1 tools follow key principles:
+
+1. **Tool Consolidation**: Each tool handles a complete workflow
+   - `unleash_search_knowledge`: Search + suggest next actions
+   - `calendar_management_agent`: Check availability + book meetings
+   - `log_qualification_signal`: Update state + determine tier + send webhook
+
+2. **Response Optimization**: Tools return meaningful context, not technical details
+   - Response format parameter for concise vs detailed
+   - Actionable next steps included
+   - Clear error messages with fallback options
+
+3. **Agent Ergonomics**: Tools work how agents think
+   - Natural language parameters
+   - Automatic derivation from context
+   - Single responsibility per tool
 
 ---
 

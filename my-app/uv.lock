@@ -14,6 +14,7 @@ version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "livekit-agents", extra = ["silero", "turn-detector"] },
+    { name = "livekit-plugins-elevenlabs" },
     { name = "livekit-plugins-noise-cancellation" },
     { name = "python-dotenv" },
 ]
@@ -28,6 +29,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "livekit-agents", extras = ["silero", "turn-detector"], specifier = "~=1.2" },
+    { name = "livekit-plugins-elevenlabs", specifier = "~=0.2" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
     { name = "python-dotenv" },
 ]
@@ -608,7 +610,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -1207,6 +1209,12 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+codecs = [
+    { name = "av" },
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
 silero = [
     { name = "livekit-plugins-silero" },
 ]
@@ -1260,6 +1268,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/ab/2b47595fe6e380df7dd2197f9d88571d10825d7897f4d368725f1f127ce3/livekit_blingfire-1.0.0-cp39-cp39-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3702fc05085a4fe74a26ade714e9f95b68c14f25fe00e68a8e66027b5d4afeeb", size = 157394, upload-time = "2025-06-30T14:56:00.981Z" },
     { url = "https://files.pythonhosted.org/packages/a9/ef/7947ab8e75cb994138e950fcc5b3cb2cef0025a321d2d4920f8233521edd/livekit_blingfire-1.0.0-cp39-cp39-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5273c5da357e33ddc51c1c8959622f9d647834197e618d1a0148f919c3ba065c", size = 167857, upload-time = "2025-06-30T14:56:02.034Z" },
     { url = "https://files.pythonhosted.org/packages/b0/d8/e69c89faf3df11c02f9a0834b1a76e2ab3ce937c86479152fe82b08cf6ff/livekit_blingfire-1.0.0-cp39-cp39-win_amd64.whl", hash = "sha256:ac10f9a6e3ad8585f002ad86f5b14d684107bef1fdd95e0b4f7edbf6ecdf709e", size = 124830, upload-time = "2025-06-30T14:56:03.389Z" },
+]
+
+[[package]]
+name = "livekit-plugins-elevenlabs"
+version = "0.7.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents", extra = ["codecs"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/5d/e1949d9be43dd3c48975f19f48d5306d50503db968eecac88f9a572a48d4/livekit_plugins_elevenlabs-0.7.14.tar.gz", hash = "sha256:8149e8e76594da487a93e5a6fa5c21ce0aa05b74d7e44f897b953a074d2667b9", size = 8372, upload-time = "2025-02-28T08:49:55.261Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/a8/3cf9f8c0b7a4844eebbf8620a1c7e2eafbdc2259e86bf0271c70c090425b/livekit_plugins_elevenlabs-0.7.14-py3-none-any.whl", hash = "sha256:d943673db27422a9b5ed165b5d56cf776ea83c24c5dec6ab17ea4af7eb14e686", size = 9357, upload-time = "2025-02-28T08:49:45.303Z" },
 ]
 
 [[package]]
