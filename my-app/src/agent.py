@@ -227,23 +227,37 @@ async def entrypoint(ctx: JobContext):
         "room": ctx.room.name,
     }
 
-    # Set up a voice AI pipeline using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Set up a voice AI pipeline using OpenAI, ElevenLabs, Deepgram, and the LiveKit turn detector
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
-        stt="assemblyai/universal-streaming:en",
+        # Using Deepgram Nova-2 for high-quality transcription
+        # Note: Use "deepgram/nova-2-phonecall" for telephony applications for optimized call quality
+        stt="deepgram/nova-2:en",
         # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
         # See all available models at https://docs.livekit.io/agents/models/llm/
         llm="openai/gpt-4.1-mini",
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
-        tts="cartesia/sonic-2:9626c31c-bec5-4cca-baa8-f8ba9e84c8bc",
-        # VAD and turn detection are used to determine when the user is speaking and when the agent should respond
+        tts="elevenlabs/eleven_turbo_v2_5:21m00Tcm4TlvDq8ikWAM",  # Rachel voice, Turbo v2.5
+        # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
+        #
+        # turn_detection: LiveKit MultilingualModel provides contextually-aware turn detection
+        # - Understands when a user has finished speaking vs. natural pauses
+        # - Supports multiple languages and accents
+        # - Uses semantic understanding to avoid premature interruptions
         turn_detection=MultilingualModel(),
+        # vad: Pre-warmed Silero VAD (loaded in prewarm function for faster startup)
+        # - Detects presence of human speech vs. silence/noise
+        # - Uses 300ms silence threshold (default) for responsive turn-taking
+        # - Enables interruption handling - user can interrupt agent mid-response
         vad=ctx.proc.userdata["vad"],
-        # allow the LLM to generate a response while waiting for the end of turn
-        # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
+        # preemptive_generation: Begin generating LLM response before user finishes speaking
+        # - Dramatically reduces perceived latency (target: <700ms total response time)
+        # - Agent starts thinking while user is still completing their thought
+        # - Combined with 300ms VAD threshold, enables natural conversation flow
+        # - Critical for voice AI responsiveness - users expect human-like reaction times
         preemptive_generation=True,
     )
 
