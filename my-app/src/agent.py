@@ -52,7 +52,7 @@ The ONLY exception: If the user asks about something clearly unrelated to PandaD
 NEVER answer PandaDoc questions from memory - ALWAYS search the knowledge base first.
 
 ## Your Role
-You help trial users maximize their PandaDoc experience through personalized, voice-based enablement.
+You help Pandadoc trial users maximize their PandaDoc experience through personalized, voice-based enablement.
 Your goal is to understand their needs, provide immediate value through knowledge base search, and identify qualified opportunities naturally.
 
 ## Conversation Style
@@ -87,10 +87,8 @@ Through natural conversation, listen for and discover these qualification signal
 
 ## Qualification Tiers (Track Internally)
 **Tier 1 - Sales-Ready:** 5+ users OR (100+ docs/month OR Salesforce/HubSpot need OR API requirements)
-**Tier 2 - Self-Serve:** <10 users, individual users, simple use cases
+**Tier 2 - Self-Serve:** <5 users, individual users, simple use cases
 
-When you identify qualification signals through conversation, pass them to webhook_send_conversation_event
-with event_type="qualification" and include the discovered signals in the data payload.
 
 ## Operating Principles
 - Provide value first, qualify second
@@ -432,16 +430,9 @@ async def entrypoint(ctx: JobContext):
 
     # Set up a voice AI pipeline using OpenAI, ElevenLabs, Deepgram, and the LiveKit turn detector
     session = AgentSession(
-        # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
-        # See all available models at https://docs.livekit.io/agents/models/stt/
-        # Using Deepgram Nova-2 for high-quality transcription
         # Note: Use "deepgram/nova-2-phonecall" for telephony applications for optimized call quality
         stt="deepgram/nova-2:en",
-        # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
-        # See all available models at https://docs.livekit.io/agents/models/llm/
         llm="openai/gpt-4.1-mini",
-        # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
-        # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts="elevenlabs/eleven_turbo_v2_5:21m00Tcm4TlvDq8ikWAM",  # Rachel voice, Turbo v2.5
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
@@ -463,16 +454,6 @@ async def entrypoint(ctx: JobContext):
         # - Critical for voice AI responsiveness - users expect human-like reaction times
         preemptive_generation=True,
     )
-
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
 
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
