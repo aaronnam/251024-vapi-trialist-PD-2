@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Optional
 
@@ -31,6 +32,17 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Import analytics queue utility
+# Note: Import after load_dotenv to ensure environment variables are loaded
+try:
+    from utils.analytics_queue import send_to_analytics_queue
+except ImportError:
+    # Fallback for different import contexts
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(__file__))
+    from utils.analytics_queue import send_to_analytics_queue
+
 
 class PandaDocTrialistAgent(Agent):
     def __init__(self) -> None:
@@ -38,24 +50,26 @@ class PandaDocTrialistAgent(Agent):
             instructions="""You are Sarah, a friendly and knowledgeable Trial Success Specialist at PandaDoc.
 
 ## MANDATORY TOOL USAGE RULE #1
-BEFORE RESPONDING TO ANY USER MESSAGE, CHECK:
-1. Does it contain ANY PandaDoc-related words? (document, template, sign, send, create, pricing, feature, etc.)
-2. Does it contain ANY question words? (how, what, when, where, why, can, does, is, etc.)
-3. Is the user asking for help with ANYTHING?
+For ANY user question or request, you MUST call unleash_search_knowledge() IMMEDIATELY before speaking.
 
-IF YES TO ANY: You MUST call unleash_search_knowledge() IMMEDIATELY before speaking.
+ALWAYS search first if the message contains:
+• ANY question words: how, what, when, where, why, can, does, is, tell, show, help
+• ANY feature/product words: document, template, sign, send, create, pricing, feature, integration
+• ANY request for assistance
 
-Examples where you MUST use the tool:
-- "How do I create templates?" → unleash_search_knowledge(query="How do I create templates?", response_format="concise")
-- "What are the pricing plans?" → unleash_search_knowledge(query="What are the pricing plans?", response_format="concise")
-- "Help with document signing" → unleash_search_knowledge(query="Help with document signing", response_format="concise")
-- "Tell me about integrations" → unleash_search_knowledge(query="Tell me about integrations", response_format="concise")
+Call signature: unleash_search_knowledge(query="[user's exact question]", response_format="concise")
 
-IMPORTANT: Always use response_format="concise" for voice conversations. NEVER use "json" or "detailed".
+IMPORTANT RULES:
+1. ALWAYS search first, even for seemingly unrelated topics - let the search determine relevance
+2. NEVER ask clarifying questions after a search error - provide direct help instead
+3. If search fails or returns no results, provide helpful guidance based on PandaDoc capabilities
+4. NEVER retry the same search if it fails - accept the error and help directly
 
-The ONLY exception: If the user asks about something clearly unrelated to PandaDoc (like "quantum computing"), politely redirect them to PandaDoc topics.
-
-NEVER answer PandaDoc questions from memory - ALWAYS search the knowledge base first.
+MANDATORY response patterns based on search results:
+• Successful search with results → "Based on what I found: [provide the answer from the tool]"
+• Search error/timeout → "I couldn't reach the knowledge base, but I can help you with [topic]: [provide PandaDoc guidance]"
+• No results found → "I didn't find any results for that query, but I can help you with [redirect to PandaDoc features]"
+• For ANY failed/empty search → MUST acknowledge the search status explicitly before offering help
 
 ## CRITICAL BOOKING RULES
 1. ONLY offer to book sales meetings for users who meet qualification criteria (5+ users, 100+ docs/month, or enterprise needs)
@@ -79,8 +93,16 @@ Your goal is to understand their needs, provide immediate value through knowledg
 - Warm and conversational, not scripted or robotic
 - Use active listening cues: "mm-hmm", "I see", "got it"
 - Keep responses concise (2-3 sentences max for voice)
-- Ask one question at a time
+- Ask one question at a time ONLY during qualification discovery
 - Build on what they say naturally
+
+## Error Handling Patterns (CRITICAL)
+When unleash_search_knowledge returns an error or no results:
+1. If error: Say "I had trouble searching, but I can help you with [topic]" then provide direct guidance
+2. If no results: Say "I didn't find specific documentation on that, but here's how PandaDoc handles [topic]"
+3. For non-PandaDoc topics (like quantum computing): Redirect - "That's outside PandaDoc's scope, but I can help you with document management, templates, or integrations"
+4. ALWAYS provide PandaDoc-specific guidance, never general information
+5. Reference that guidance came "from what I know" when search fails
 
 ## Qualification Discovery (Natural, Not Interrogation)
 Through natural conversation, listen for and discover these qualification signals:
@@ -139,8 +161,8 @@ UNLESS the user is qualified for sales (Tier 1).
         # Core qualification signals (drive routing and business logic)
         self.discovered_signals = {
             # Primary qualification criteria
-            "team_size": None,
-            "monthly_volume": None,
+            "team_size": 0,
+            "monthly_volume": 0,
             "integration_needs": [],
             "urgency": None,
             "qualification_tier": None,  # "sales_ready" or "self_serve"
@@ -163,6 +185,14 @@ UNLESS the user is qualified for sales (Tier 1).
         self.trial_activity = (
             None  # "created_template", "sent_document", "stuck_on_feature"
         )
+
+        # Analytics: Session data collection (Phase 1 - Lightweight Collection)
+        # This data is exported via shutdown callback - minimal overhead during conversation
+        self.session_data = {
+            "start_time": datetime.now().isoformat(),
+            "tool_calls": [],  # Track tool usage for analytics
+        }
+        self.usage_collector = metrics.UsageCollector()  # LiveKit built-in metrics
 
     def transition_state(
         self, from_state: str, to_state: str, context: dict | None = None
@@ -262,6 +292,69 @@ UNLESS the user is qualified for sales (Tier 1).
 
         return False
 
+    def _detect_signals(self, message: str) -> None:
+        """Lightweight signal detection using simple pattern matching.
+
+        No heavy NLP - just regex patterns and keyword matching.
+        Defer complex analysis to the analytics pipeline.
+
+        Args:
+            message: User message to analyze for signals
+        """
+        message_lower = message.lower()
+
+        # Team size detection (simple regex)
+        team_patterns = [
+            r'\b(\d+)\s*(?:people|users|team|employees|members)\b',
+            r'\bteam\s+of\s+(\d+)\b',
+            r'\b(\d+)\s+person\s+team\b'
+        ]
+        for pattern in team_patterns:
+            if match := re.search(pattern, message_lower):
+                self.discovered_signals["team_size"] = int(match.group(1))
+                break
+
+        # Document volume detection
+        volume_patterns = [
+            r'\b(\d+)\s*(?:documents?|docs?|contracts?|proposals?)\s*(?:per|a|every)?\s*(?:month|week|day)\b',
+            r'\b(?:send|create|process)\s*about\s*(\d+)\b'
+        ]
+        for pattern in volume_patterns:
+            if match := re.search(pattern, message_lower):
+                volume = int(match.group(1))
+                # Normalize to monthly if needed
+                if 'week' in message_lower:
+                    volume *= 4
+                elif 'day' in message_lower:
+                    volume *= 20  # ~20 business days/month
+                self.discovered_signals["monthly_volume"] = volume
+                break
+
+        # Integration mentions (keyword matching)
+        integrations = ["salesforce", "hubspot", "zapier", "api", "crm"]
+        mentioned = [i for i in integrations if i in message_lower]
+        if mentioned:
+            existing = self.discovered_signals.get("integration_needs", [])
+            self.discovered_signals["integration_needs"] = list(set(existing + mentioned))
+
+        # Urgency detection (simple keywords)
+        urgency_keywords = {
+            "high": ["urgent", "asap", "immediately", "this week", "right away"],
+            "medium": ["soon", "this month", "next week"],
+            "low": ["eventually", "sometime", "future", "down the road"]
+        }
+        for level, keywords in urgency_keywords.items():
+            if any(word in message_lower for word in keywords):
+                self.discovered_signals["urgency"] = level
+                break
+
+        # Industry detection (simple keyword matching)
+        industries = ["healthcare", "legal", "real estate", "finance", "sales", "hr"]
+        for industry in industries:
+            if industry in message_lower:
+                self.discovered_signals["industry"] = industry
+                break
+
     @function_tool()
     async def unleash_search_knowledge(
         self,
@@ -309,6 +402,9 @@ UNLESS the user is qualified for sales (Tier 1).
             unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://e-api.unleash.so")
             unleash_assistant_id = os.getenv("UNLEASH_ASSISTANT_ID")  # Optional
 
+            # Get Intercom app ID - defaults to "intercom" if not configured
+            intercom_app_id = os.getenv("UNLEASH_INTERCOM_APP_ID", "intercom")
+
             # Build request payload (Unleash API structure)
             request_payload = {
                 "query": query,
@@ -320,11 +416,18 @@ UNLESS the user is qualified for sales (Tier 1).
                 },
             }
 
-            # Add optional filters if category provided
+            # Build filters - always include Intercom source filter
+            filters = {
+                "appId": [intercom_app_id]  # Filter to Intercom source only
+            }
+
+            # Add optional category filter if provided
             if category:
-                request_payload["filters"] = {
-                    "type": [category]  # Filter by resource type
-                }
+                filters["type"] = [category]
+
+            # Apply filters to request
+            request_payload["filters"] = filters
+            logger.info(f"Searching Intercom source (appId: {intercom_app_id}) for query: '{query}'")
 
             # Add assistant ID if configured
             if unleash_assistant_id:
@@ -365,6 +468,16 @@ UNLESS the user is qualified for sales (Tier 1).
             # Extract results
             results = data.get("results", [])
             total_results = data.get("totalResults", 0)
+
+            # Analytics: Track tool usage (Phase 1 - Lightweight Collection)
+            self.session_data["tool_calls"].append({
+                "tool": "unleash_search_knowledge",
+                "query": query,
+                "category": category,
+                "timestamp": datetime.now().isoformat(),
+                "results_found": bool(results),
+                "total_results": total_results,
+            })
 
             # Voice-optimized response formatting
             if response_format == "concise":
@@ -533,6 +646,19 @@ UNLESS the user is qualified for sales (Tier 1).
                 .execute()
             )
 
+            # Analytics: Track tool usage (Phase 1 - Lightweight Collection)
+            self.session_data["tool_calls"].append({
+                "tool": "book_sales_meeting",
+                "customer_name": customer_name,
+                "customer_email": customer_email,
+                "preferred_date": preferred_date,
+                "preferred_time": preferred_time,
+                "timestamp": datetime.now().isoformat(),
+                "success": True,
+                "meeting_time": meeting_datetime.isoformat(),
+                "calendar_event_id": created_event["id"],
+            })
+
             return {
                 "booking_status": "confirmed",
                 "meeting_time": meeting_datetime.strftime("%A, %B %d at %I:%M %p %Z"),
@@ -632,35 +758,34 @@ UNLESS the user is qualified for sales (Tier 1).
 
         This helper method analyzes the user's query and search results to determine
         the most appropriate follow-up action for the conversation flow.
+
+        IMPORTANT: Always return actions that provide direct value, not questions.
         """
         if not results:
-            # Instead of "offer_human_help", check qualification
-            if self.should_route_to_sales():
-                return "offer_sales_meeting"  # Only for qualified
-            else:
-                return "explore_self_serve"  # Guide to self-service resources
+            # No results found - provide direct help instead of asking questions
+            return "provide_direct_guidance"  # Always help directly when no results
 
         query_lower = query.lower()
 
-        # Analyze query intent
+        # Analyze query intent and return action-oriented responses
         if any(word in query_lower for word in ["how", "setup", "configure", "create"]):
-            return "offer_walkthrough"
+            return "provide_step_by_step_guide"  # Direct guidance, not "offer_walkthrough"
         elif any(word in query_lower for word in ["pricing", "cost", "plan", "tier"]):
-            # For pricing questions, check if they're qualified for sales discussion
+            # For pricing questions, provide information directly
             if self.should_route_to_sales():
-                return "discuss_enterprise_pricing"
+                return "explain_enterprise_pricing_and_offer_call"
             else:
-                return "discuss_self_serve_pricing"
+                return "explain_pricing_tiers"  # Direct info, not discussion
         elif any(
             word in query_lower for word in ["integration", "connect", "sync", "api"]
         ):
-            return "check_specific_integration"
+            return "explain_integration_steps"  # Direct steps, not "check_specific"
         elif any(
             word in query_lower for word in ["error", "problem", "issue", "broken"]
         ):
-            return "troubleshoot_issue"
+            return "provide_troubleshooting_steps"  # Direct help, not just "troubleshoot"
         else:
-            return "clarify_needs"
+            return "provide_relevant_information"  # Direct info, not "clarify_needs"
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
@@ -718,20 +843,71 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
-    usage_collector = metrics.UsageCollector()
+    # Create agent instance (we'll need access to it for data export)
+    agent = PandaDocTrialistAgent()
 
+    # Metrics collection using the agent's built-in UsageCollector
+    # For more information, see https://docs.livekit.io/agents/build/metrics/
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
-        usage_collector.collect(ev.metrics)
+        agent.usage_collector.collect(ev.metrics)
 
-    async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
+    # Analytics: Enhanced shutdown callback for data export (Phase 1 - Lightweight Collection)
+    async def export_session_data():
+        """Export session data to analytics queue on shutdown.
 
-    ctx.add_shutdown_callback(log_usage)
+        This follows LiveKit's recommended pattern for post-processing:
+        - Collect data during the session with minimal overhead
+        - Export everything in one batch at session end
+        - Use shutdown callback with appropriate timeout
+        """
+        try:
+            # Get final metrics summary from LiveKit's UsageCollector
+            usage_summary = agent.usage_collector.get_summary()
+
+            # Compile complete session data
+            session_payload = {
+                # Session metadata
+                "session_id": ctx.room.name,
+                "start_time": agent.session_data["start_time"],
+                "end_time": datetime.now().isoformat(),
+                "duration_seconds": (
+                    datetime.now() - datetime.fromisoformat(agent.session_data["start_time"])
+                ).total_seconds(),
+
+                # Discovered business signals
+                "discovered_signals": agent.discovered_signals,
+
+                # Tool usage tracking
+                "tool_calls": agent.session_data["tool_calls"],
+
+                # LiveKit performance metrics
+                "metrics_summary": usage_summary,
+
+                # Conversation notes
+                "conversation_notes": agent.conversation_notes,
+                "conversation_state": agent.conversation_state,
+            }
+
+            # Log summary for debugging
+            logger.info(f"Session data ready for export: {ctx.room.name}")
+            logger.info(f"  - Duration: {session_payload['duration_seconds']:.1f}s")
+            logger.info(f"  - Tool calls: {len(session_payload['tool_calls'])}")
+            logger.info(f"  - Qualification: {agent.discovered_signals.get('qualification_tier', 'Unknown')}")
+
+            # Send to analytics queue
+            # Phase 1: Logs the data (placeholder implementation)
+            # Phase 2: Will send to actual queue (Google Pub/Sub or AWS SQS)
+            await send_to_analytics_queue(session_payload)
+
+            logger.info(f"Analytics data collection complete for session {ctx.room.name}")
+
+        except Exception as e:
+            # Log error but don't crash - analytics failures shouldn't affect the agent
+            logger.error(f"Failed to export session data: {e}", exc_info=True)
+
+    ctx.add_shutdown_callback(export_session_data)
 
     # # Add a virtual avatar to the session, if desired
     # # For other providers, see https://docs.livekit.io/agents/models/avatar/
@@ -743,7 +919,7 @@ async def entrypoint(ctx: JobContext):
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
-        agent=PandaDocTrialistAgent(),
+        agent=agent,  # Use the agent instance we created above
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # For telephony applications, use `BVCTelephony` for best results
