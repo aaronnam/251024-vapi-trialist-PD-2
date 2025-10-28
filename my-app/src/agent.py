@@ -1,9 +1,15 @@
+import json
 import logging
 import os
-from typing import Dict, Any, Optional
+from datetime import date, datetime, time, timedelta
+from typing import Any, Dict, Optional
 
+import dateparser
 import httpx
 from dotenv import load_dotenv
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -51,6 +57,20 @@ The ONLY exception: If the user asks about something clearly unrelated to PandaD
 
 NEVER answer PandaDoc questions from memory - ALWAYS search the knowledge base first.
 
+## CRITICAL BOOKING RULES
+1. ONLY offer to book sales meetings for users who meet qualification criteria (5+ users, 100+ docs/month, or enterprise needs)
+2. NEVER offer "human assistance" or "talk to someone" for unqualified users
+3. For unqualified users, guide them to self-serve resources and features
+4. When a QUALIFIED user requests a meeting ("schedule a call", "book a meeting", "talk to sales"), you MUST use book_sales_meeting tool IMMEDIATELY
+
+## Tool Usage Priority
+1. unleash_search_knowledge - ALWAYS use for ANY PandaDoc questions
+2. book_sales_meeting - MANDATORY for qualified users requesting meetings
+
+IMPORTANT: When a QUALIFIED user says "let's schedule a meeting", "I'd like to talk to sales", "can we book a call", or similar:
+→ You MUST call book_sales_meeting() immediately
+→ Do NOT just acknowledge - actually call the tool to book the meeting
+
 ## Your Role
 You help Pandadoc trial users maximize their PandaDoc experience through personalized, voice-based enablement.
 Your goal is to understand their needs, provide immediate value through knowledge base search, and identify qualified opportunities naturally.
@@ -89,6 +109,21 @@ Through natural conversation, listen for and discover these qualification signal
 **Tier 1 - Sales-Ready:** 5+ users OR (100+ docs/month OR Salesforce/HubSpot need OR API requirements)
 **Tier 2 - Self-Serve:** <5 users, individual users, simple use cases
 
+## Response Patterns
+
+For QUALIFIED users experiencing friction:
+"I can see PandaDoc would be valuable for your team. Would you like me to book a quick call with our sales team to discuss enterprise features and pricing?"
+
+For UNQUALIFIED users needing help:
+"Let me show you how to do that in PandaDoc. [provide specific guidance]. Would you like to try that now?"
+
+NEVER say:
+- "Let me connect you with someone"
+- "A human can help you with that"
+- "Contact support"
+- "Reach out to our team"
+
+UNLESS the user is qualified for sales (Tier 1).
 
 ## Operating Principles
 - Provide value first, qualify second
@@ -125,7 +160,9 @@ Through natural conversation, listen for and discover these qualification signal
 
         # Trial context
         self.trial_day = None
-        self.trial_activity = None  # "created_template", "sent_document", "stuck_on_feature"
+        self.trial_activity = (
+            None  # "created_template", "sent_document", "stuck_on_feature"
+        )
 
     def transition_state(
         self, from_state: str, to_state: str, context: dict | None = None
@@ -144,7 +181,10 @@ Through natural conversation, listen for and discover these qualification signal
             "GREETING": ["DISCOVERY", "FRICTION_RESCUE"],
             "DISCOVERY": ["VALUE_DEMO", "QUALIFICATION", "FRICTION_RESCUE"],
             "VALUE_DEMO": ["QUALIFICATION", "NEXT_STEPS", "FRICTION_RESCUE"],
-            "QUALIFICATION": ["NEXT_STEPS", "VALUE_DEMO"],  # Can loop back for more demo
+            "QUALIFICATION": [
+                "NEXT_STEPS",
+                "VALUE_DEMO",
+            ],  # Can loop back for more demo
             "NEXT_STEPS": ["CLOSING", "QUALIFICATION"],  # Can clarify qualification
             "FRICTION_RESCUE": [
                 "DISCOVERY",
@@ -228,7 +268,7 @@ Through natural conversation, listen for and discover these qualification signal
         context: RunContext,
         query: str,
         category: Optional[str] = None,
-        response_format: Optional[str] = None
+        response_format: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Search PandaDoc knowledge base - REQUIRED for ALL PandaDoc questions.
 
@@ -253,14 +293,18 @@ Through natural conversation, listen for and discover these qualification signal
         # Validate and normalize response_format - default to concise for voice
         if not response_format or response_format not in ["concise", "detailed"]:
             if response_format:
-                logger.warning(f"Invalid response_format '{response_format}', defaulting to 'concise'")
+                logger.warning(
+                    f"Invalid response_format '{response_format}', defaulting to 'concise'"
+                )
             response_format = "concise"
 
         try:
             # Get Unleash configuration
             unleash_api_key = os.getenv("UNLEASH_API_KEY")
             if not unleash_api_key:
-                raise ToolError("PandaDoc knowledge base is not configured. Let me help you directly instead.")
+                raise ToolError(
+                    "PandaDoc knowledge base is not configured. Let me help you directly instead."
+                )
 
             unleash_base_url = os.getenv("UNLEASH_BASE_URL", "https://e-api.unleash.so")
             unleash_assistant_id = os.getenv("UNLEASH_ASSISTANT_ID")  # Optional
@@ -272,8 +316,8 @@ Through natural conversation, listen for and discover these qualification signal
                 "semanticSearch": True,  # Enable AI-powered semantic search
                 "paging": {
                     "pageSize": 3 if response_format == "concise" else 5,
-                    "pageNumber": 0
-                }
+                    "pageNumber": 0,
+                },
             }
 
             # Add optional filters if category provided
@@ -292,22 +336,28 @@ Through natural conversation, listen for and discover these qualification signal
                     f"{unleash_base_url}/search",
                     headers={
                         "Authorization": f"Bearer {unleash_api_key}",
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
                     },
                     json=request_payload,
-                    timeout=10.0  # 10 second timeout balanced for voice response
+                    timeout=10.0,  # 10 second timeout balanced for voice response
                 )
 
                 # Check for API errors
                 if response.status_code == 400:
                     logger.warning(f"Unleash API bad request: {response.text}")
-                    raise ToolError("I couldn't understand that search. Could you rephrase your question?")
+                    raise ToolError(
+                        "I couldn't understand that search. Could you rephrase your question?"
+                    )
                 elif response.status_code == 401:
                     logger.error("Unleash API authentication failed")
-                    raise ToolError("I'm having trouble accessing the knowledge base. Let me help you directly.")
+                    raise ToolError(
+                        "I'm having trouble accessing the knowledge base. Let me help you directly."
+                    )
                 elif response.status_code >= 500:
                     logger.error(f"Unleash API server error: {response.status_code}")
-                    raise ToolError("The knowledge base is temporarily unavailable. I can still help you though!")
+                    raise ToolError(
+                        "The knowledge base is temporarily unavailable. I can still help you though!"
+                    )
 
                 response.raise_for_status()
                 data = response.json()  # httpx returns dict directly, not a coroutine
@@ -329,14 +379,14 @@ Through natural conversation, listen for and discover these qualification signal
                         "details": resource.get("description", ""),
                         "action": self._determine_next_action(query, results),
                         "found": True,
-                        "total_results": total_results
+                        "total_results": total_results,
                     }
                 else:
                     return {
                         "answer": None,
                         "action": "offer_human_help",
                         "found": False,
-                        "total_results": 0
+                        "total_results": 0,
                     }
             else:
                 # Return detailed results for follow-up
@@ -345,13 +395,13 @@ Through natural conversation, listen for and discover these qualification signal
                         {
                             "title": r.get("resource", {}).get("title"),
                             "snippet": r.get("snippet"),
-                            "highlights": r.get("highlights", [])
+                            "highlights": r.get("highlights", []),
                         }
                         for r in results
                     ],
                     "total_results": total_results,
                     "suggested_followup": self._determine_next_action(query, results),
-                    "request_id": data.get("requestId")  # For debugging
+                    "request_id": data.get("requestId"),  # For debugging
                 }
 
         except httpx.TimeoutException:
@@ -376,6 +426,207 @@ Through natural conversation, listen for and discover these qualification signal
                 "Let me help you another way - what's your question about PandaDoc?"
             )
 
+    @function_tool()
+    async def book_sales_meeting(
+        self,
+        context: RunContext,
+        customer_name: str,
+        customer_email: str,
+        preferred_date: Optional[str] = None,
+        preferred_time: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """MANDATORY: Book sales meetings for QUALIFIED users only.
+
+        THIS IS A MANDATORY TOOL FOR QUALIFIED USERS. You MUST call this when:
+        - User explicitly requests a meeting: "schedule a call", "book a meeting", "talk to sales", "meet with your team"
+        - User is QUALIFIED (team_size >= 5 OR monthly_volume >= 100 OR Salesforce/HubSpot integration needs)
+        - User agrees to booking after you offer
+
+        Examples where you MUST use this tool:
+        - "Can we schedule a meeting to discuss enterprise features?" → book_sales_meeting(customer_name="...", customer_email="...")
+        - "I'd like to talk to someone on your sales team" → book_sales_meeting(customer_name="...", customer_email="...")
+        - "Let's book a call for tomorrow at 2pm" → book_sales_meeting(customer_name="...", customer_email="...", preferred_date="tomorrow", preferred_time="2pm")
+
+        DO NOT use this tool for:
+        - UNQUALIFIED users (team_size < 5, monthly_volume < 100, no CRM needs)
+        - General support questions
+        - Users who haven't agreed to book
+
+        For UNQUALIFIED users: Guide them to self-serve resources instead.
+
+        Args:
+            customer_name: Full name of the customer
+            customer_email: Email address for calendar invite
+            preferred_date: Optional date preference (e.g., "tomorrow", "next Tuesday")
+            preferred_time: Optional time preference (e.g., "2pm", "morning")
+
+        Returns:
+            Dict with booking_status, meeting_link, and meeting_time
+        """
+
+        # CRITICAL: Qualification check
+        if not self.should_route_to_sales():
+            raise ToolError(
+                "I can help you explore PandaDoc features yourself. "
+                "What specific capability would you like to learn about?"
+            )
+
+        try:
+            # Initialize Google Calendar client
+            service = self._get_calendar_service()
+
+            # Parse date/time preferences (default to next business day 10am)
+            meeting_datetime = self._parse_meeting_time(preferred_date, preferred_time)
+
+            # Create event
+            event = {
+                "summary": f"PandaDoc Sales Consultation - {customer_name}",
+                "description": (
+                    f"Sales consultation for qualified trial user\n\n"
+                    f"Customer: {customer_name}\n"
+                    f"Email: {customer_email}\n"
+                    f"Qualification Signals:\n"
+                    f"- Team Size: {self.discovered_signals.get('team_size', 'Unknown')}\n"
+                    f"- Monthly Volume: {self.discovered_signals.get('monthly_volume', 'Unknown')}\n"
+                    f"- Integration Needs: {', '.join(self.discovered_signals.get('integration_needs', []))}\n"
+                    f"- Industry: {self.discovered_signals.get('industry', 'Unknown')}"
+                ),
+                "start": {
+                    "dateTime": meeting_datetime.isoformat(),
+                    "timeZone": os.getenv(
+                        "GOOGLE_CALENDAR_TIMEZONE", "America/Toronto"
+                    ),
+                },
+                "end": {
+                    "dateTime": (meeting_datetime + timedelta(minutes=30)).isoformat(),
+                    "timeZone": os.getenv(
+                        "GOOGLE_CALENDAR_TIMEZONE", "America/Toronto"
+                    ),
+                },
+                "attendees": [
+                    {"email": customer_email},
+                ],
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": f"pandadoc-{int(datetime.now().timestamp())}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                },
+                "reminders": {
+                    "useDefault": False,
+                    "overrides": [
+                        {"method": "email", "minutes": 60},
+                        {"method": "popup", "minutes": 10},
+                    ],
+                },
+            }
+
+            # Create the event
+            created_event = (
+                service.events()
+                .insert(
+                    calendarId=os.getenv("GOOGLE_CALENDAR_ID"),
+                    body=event,
+                    conferenceDataVersion=1,
+                    sendUpdates="all",  # Send invites to attendees
+                )
+                .execute()
+            )
+
+            return {
+                "booking_status": "confirmed",
+                "meeting_time": meeting_datetime.strftime("%A, %B %d at %I:%M %p %Z"),
+                "meeting_link": created_event.get(
+                    "hangoutLink", created_event.get("htmlLink")
+                ),
+                "calendar_event_id": created_event["id"],
+                "action": "meeting_booked",
+            }
+
+        except HttpError as e:
+            if e.resp.status == 401:
+                logger.error("Google Calendar authentication failed")
+                raise ToolError(
+                    "I'm unable to book meetings right now. Please email sales@pandadoc.com directly."
+                )
+            else:
+                logger.error(f"Google Calendar API error: {e}")
+                raise ToolError(
+                    "There was an issue booking your meeting. Please try again or email sales@pandadoc.com"
+                )
+
+        except Exception as e:
+            logger.error(f"Unexpected booking error: {e}")
+            raise ToolError(
+                "I couldn't complete the booking. Please email sales@pandadoc.com with your availability."
+            )
+
+    def _get_calendar_service(self):
+        """Initialize Google Calendar service using service account.
+
+        Supports both local development (file path) and cloud deployment (JSON as env var).
+        """
+        # For LiveKit Cloud: Store JSON content as environment variable
+        if os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT"):
+            # Parse JSON from environment variable (for cloud deployment)
+            service_account_info = json.loads(
+                os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT")
+            )
+            credentials = service_account.Credentials.from_service_account_info(
+                service_account_info,
+                scopes=["https://www.googleapis.com/auth/calendar"],
+            )
+        else:
+            # Fall back to file path (for local development)
+            base_dir = os.path.dirname(os.path.dirname(__file__))
+            service_account_path = base_dir + os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            credentials = service_account.Credentials.from_service_account_file(
+                service_account_path,
+                scopes=["https://www.googleapis.com/auth/calendar"],
+            )
+
+        return build("calendar", "v3", credentials=credentials)
+
+    def _parse_meeting_time(
+        self, date_pref: Optional[str], time_pref: Optional[str]
+    ) -> datetime:
+        """Parse natural language date/time into datetime object.
+
+        Simple parsing - defaults to next business day at 10am if not specified.
+        """
+        # Try to parse the date preference
+        if date_pref:
+            parsed_date = dateparser.parse(
+                date_pref, settings={"PREFER_DATES_FROM": "future"}
+            )
+            if parsed_date:
+                base_date = parsed_date.date()
+            else:
+                base_date = self._next_business_day()
+        else:
+            base_date = self._next_business_day()
+
+        # Parse time preference (default 10am)
+        if time_pref:
+            parsed_time = dateparser.parse(time_pref)
+            if parsed_time:
+                meeting_time = parsed_time.time()
+            else:
+                meeting_time = time(10, 0)  # Default 10am
+        else:
+            meeting_time = time(10, 0)
+
+        return datetime.combine(base_date, meeting_time)
+
+    def _next_business_day(self) -> date:
+        """Get next business day (skip weekends)."""
+        tomorrow = date.today() + timedelta(days=1)
+        # If tomorrow is Saturday (5) or Sunday (6), jump to Monday
+        if tomorrow.weekday() >= 5:
+            days_ahead = 7 - tomorrow.weekday()
+            return tomorrow + timedelta(days=days_ahead)
+        return tomorrow
+
     def _determine_next_action(self, query: str, results: list) -> str:
         """Determine the best next action based on query and results.
 
@@ -383,7 +634,11 @@ Through natural conversation, listen for and discover these qualification signal
         the most appropriate follow-up action for the conversation flow.
         """
         if not results:
-            return "offer_human_help"
+            # Instead of "offer_human_help", check qualification
+            if self.should_route_to_sales():
+                return "offer_sales_meeting"  # Only for qualified
+            else:
+                return "explore_self_serve"  # Guide to self-service resources
 
         query_lower = query.lower()
 
@@ -391,10 +646,18 @@ Through natural conversation, listen for and discover these qualification signal
         if any(word in query_lower for word in ["how", "setup", "configure", "create"]):
             return "offer_walkthrough"
         elif any(word in query_lower for word in ["pricing", "cost", "plan", "tier"]):
-            return "discuss_roi"
-        elif any(word in query_lower for word in ["integration", "connect", "sync", "api"]):
+            # For pricing questions, check if they're qualified for sales discussion
+            if self.should_route_to_sales():
+                return "discuss_enterprise_pricing"
+            else:
+                return "discuss_self_serve_pricing"
+        elif any(
+            word in query_lower for word in ["integration", "connect", "sync", "api"]
+        ):
             return "check_specific_integration"
-        elif any(word in query_lower for word in ["error", "problem", "issue", "broken"]):
+        elif any(
+            word in query_lower for word in ["error", "problem", "issue", "broken"]
+        ):
             return "troubleshoot_issue"
         else:
             return "clarify_needs"
@@ -490,6 +753,11 @@ async def entrypoint(ctx: JobContext):
 
     # Join the room and connect to the user
     await ctx.connect()
+
+    # Initial greeting
+    await session.say(
+        "Hi! I'm your AI Pandadoc Trial Success Specialist. How's your trial going? Any roadblocks I can help clear up?"
+    )
 
 
 if __name__ == "__main__":

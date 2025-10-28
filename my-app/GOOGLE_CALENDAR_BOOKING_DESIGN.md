@@ -2,6 +2,8 @@
 
 > **📌 UPDATE: Google Calendar API is already configured and ready to use. Service account credentials and calendar ID are set up in `.env.local`. Skip directly to Phase 2 (Dependencies) for implementation.**
 
+> **✅ LIVEKIT COMPATIBILITY VERIFIED: This design is fully compatible with LiveKit Agents and LiveKit Cloud deployment. External API calls and secrets management are fully supported.**
+
 ## Executive Summary
 Add a simple, conditional meeting booking capability to the PandaDoc voice agent that **only** books sales meetings for qualified trial users. This design prioritizes simplicity and clear business logic over complex availability checking.
 
@@ -16,6 +18,7 @@ Add a simple, conditional meeting booking capability to the PandaDoc voice agent
 - **Qualification-Driven**: Tool only activates for qualified leads
 - **Clear Boundaries**: No human assistance fallback for unqualified users
 - **Voice-Optimized**: Fast execution with immediate confirmation
+- **LiveKit Native**: Designed for seamless LiveKit Agents integration
 
 ## Technical Architecture
 
@@ -32,9 +35,23 @@ GOOGLE_CALENDAR_ID=c_f81fc95409534f4983a4bbb949b1ea35989199a5ae73d8383a9e022dea4
 - Calendar ID configured and ready
 - No additional setup needed for authentication
 
-### 2. Tool Implementation
+### 2. Tool Implementation (LiveKit Compatible)
 
 ```python
+# Additional imports needed in agent.py
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from datetime import datetime, timedelta, time, date
+import dateparser
+import json  # For LiveKit Cloud deployment
+
+# CRITICAL: This tool is fully compatible with LiveKit Agents
+# - Uses @function_tool decorator (LiveKit standard)
+# - Returns dict (automatically converted to string for LLM)
+# - Uses ToolError for graceful error handling
+# - Async function works with LiveKit's async patterns
+
 @function_tool()
 async def book_sales_meeting(
     self,
@@ -94,11 +111,11 @@ async def book_sales_meeting(
             ),
             'start': {
                 'dateTime': meeting_datetime.isoformat(),
-                'timeZone': 'America/Toronto',  # Or use env variable
+                'timeZone': os.getenv('GOOGLE_CALENDAR_TIMEZONE', 'America/Toronto'),
             },
             'end': {
                 'dateTime': (meeting_datetime + timedelta(minutes=30)).isoformat(),
-                'timeZone': 'America/Toronto',
+                'timeZone': os.getenv('GOOGLE_CALENDAR_TIMEZONE', 'America/Toronto'),
             },
             'attendees': [
                 {'email': customer_email},
@@ -156,12 +173,10 @@ def _get_calendar_service(self):
     from googleapiclient.discovery import build
     import os
 
-    # Get the service account JSON path (relative to my-app directory)
-    service_account_path = os.path.join(
-        os.path.dirname(__file__),  # my-app/src/
-        '..',  # my-app/
-        os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON').lstrip('/')
-    )
+    # Get the service account JSON path
+    # The env var starts with / so it's relative to my-app directory
+    base_dir = os.path.dirname(os.path.dirname(__file__))  # Gets my-app/ directory
+    service_account_path = base_dir + os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
 
     # Use service account for server-to-server auth
     credentials = service_account.Credentials.from_service_account_file(
@@ -299,6 +314,37 @@ cd my-app
 uv add google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib dateparser
 ```
 
+**Quick Test** - Verify Calendar Connection:
+```python
+# test_calendar.py - Run this first to verify setup
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import os
+from dotenv import load_dotenv
+
+load_dotenv('.env.local')
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+service_account_path = base_dir + os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
+
+credentials = service_account.Credentials.from_service_account_file(
+    service_account_path,
+    scopes=['https://www.googleapis.com/auth/calendar']
+)
+
+service = build('calendar', 'v3', credentials=credentials)
+
+# Test: List next 10 events
+events_result = service.events().list(
+    calendarId=os.getenv('GOOGLE_CALENDAR_ID'),
+    maxResults=10,
+    singleEvents=True,
+    orderBy='startTime'
+).execute()
+
+print(f"✅ Connected! Found {len(events_result.get('items', []))} upcoming events")
+```
+
 ### Phase 3: Core Implementation (1.5 hours)
 1. Add `book_sales_meeting` tool to agent.py
 2. Add helper methods for calendar service and time parsing
@@ -394,6 +440,136 @@ This MVP version:
 - No Google Calendar API needed initially
 - Can upgrade to full implementation later
 
+## LiveKit Cloud Deployment Configuration
+
+### Verified Compatibility ✅
+LiveKit Agents documentation confirms:
+- **External API calls are fully supported** in function tools
+- **"Anything else that a Python function can do"** works in tools
+- **Secrets management** via environment variables in LiveKit Cloud
+
+### Deployment Setup for LiveKit Cloud
+
+#### 1. Service Account JSON Handling
+For LiveKit Cloud deployment, the service account JSON needs to be handled differently than local development:
+
+**Option A: Environment Variable (Recommended for LiveKit Cloud)**
+```python
+def _get_calendar_service(self):
+    """Initialize Google Calendar service for LiveKit Cloud deployment."""
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    import json
+    import os
+
+    # For LiveKit Cloud: Store JSON content as environment variable
+    if os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT'):
+        # Parse JSON from environment variable (for cloud deployment)
+        service_account_info = json.loads(os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT'))
+        credentials = service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+    else:
+        # Fall back to file path (for local development)
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        service_account_path = base_dir + os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
+        credentials = service_account.Credentials.from_service_account_file(
+            service_account_path,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+
+    return build('calendar', 'v3', credentials=credentials)
+```
+
+#### 2. Deploy with Secrets
+When deploying to LiveKit Cloud, provide secrets via CLI:
+
+```bash
+# First, ensure .dockerignore excludes sensitive files
+echo ".secrets/" >> .dockerignore
+echo "*.json" >> .dockerignore
+echo ".env*" >> .dockerignore
+
+# Convert service account JSON to single-line format
+SERVICE_ACCOUNT_JSON=$(cat .secrets/pandadoc-voice-agent-03fa518aa3d0.json | jq -c .)
+
+# Create secrets file for deployment
+cat > secrets.env << EOF
+GOOGLE_CALENDAR_ID=c_f81fc95409534f4983a4bbb949b1ea35989199a5ae73d8383a9e022dea44b816@group.calendar.google.com
+GOOGLE_SERVICE_ACCOUNT_JSON_CONTENT=$SERVICE_ACCOUNT_JSON
+OPENAI_API_KEY=your_key_here
+DEEPGRAM_API_KEY=your_key_here
+ELEVENLABS_API_KEY=your_key_here
+UNLEASH_API_KEY=your_key_here
+UNLEASH_BASE_URL=https://e-api.unleash.so
+EOF
+
+# Deploy with secrets
+lk agent deploy --secrets-file secrets.env
+
+# Or update existing agent
+lk agent update --secrets-file secrets.env
+```
+
+#### 3. Cold Start Considerations
+LiveKit Cloud agents may experience cold starts when scaled down. The Google Calendar API call adds minimal latency (~1-2 seconds), which is acceptable for voice interactions.
+
+### Testing Before Deployment
+
+```python
+# test_calendar_livekit.py - Test with LiveKit patterns
+import asyncio
+from livekit.agents import RunContext, ToolError
+
+async def test_booking_tool():
+    """Test the booking tool as it would run in LiveKit."""
+    # Mock RunContext for testing
+    mock_context = RunContext(
+        session=None,  # Would be actual session in production
+        function_call=None,
+        speech_handle=None,
+        userdata={}
+    )
+
+    # Create agent instance
+    agent = PandaDocTrialistAgent()
+
+    # Test qualified user
+    agent.discovered_signals = {
+        "team_size": 10,
+        "monthly_volume": 500,
+        "integration_needs": ["salesforce"]
+    }
+
+    try:
+        result = await agent.book_sales_meeting(
+            context=mock_context,
+            customer_name="John Doe",
+            customer_email="john@example.com",
+            preferred_date="tomorrow",
+            preferred_time="2pm"
+        )
+        print(f"✅ Booking successful: {result}")
+    except ToolError as e:
+        print(f"❌ Tool error: {e}")
+
+    # Test unqualified user
+    agent.discovered_signals = {"team_size": 1}
+
+    try:
+        result = await agent.book_sales_meeting(
+            context=mock_context,
+            customer_name="Jane Smith",
+            customer_email="jane@example.com"
+        )
+        print("❌ Should have raised ToolError for unqualified user")
+    except ToolError as e:
+        print(f"✅ Correctly rejected unqualified user: {e}")
+
+asyncio.run(test_booking_tool())
+```
+
 ## Summary
 
 This design delivers exactly what's needed:
@@ -403,10 +579,40 @@ This design delivers exactly what's needed:
 4. ✅ Simple, maintainable implementation
 5. ✅ Clear error handling
 6. ✅ Voice-optimized responses
+7. ✅ **Google Calendar already configured - ready for immediate implementation**
 
 The implementation avoids over-engineering by:
 - No complex availability checking
 - No multi-calendar coordination
 - No round-trip confirmation flows
 - Direct booking with sensible defaults
-- Service account for simple auth
+- Service account authentication already set up
+
+**Total Implementation Time: ~2 hours** (reduced from 4+ hours since auth is complete)
+
+## LiveKit-Specific Implementation Notes
+
+### ✅ Confirmed Compatibility
+Based on LiveKit documentation review:
+
+1. **Tool Execution**: LiveKit agents can "Call external APIs or lookup data" and "Anything else that a Python function can do"
+2. **Error Handling**: ToolError exceptions are the proper way to handle failures gracefully
+3. **Return Values**: Dicts are automatically converted to strings for the LLM
+4. **Async Support**: Async functions work seamlessly with LiveKit's async patterns
+5. **RunContext**: Provides access to session, function_call, speech_handle, and userdata
+
+### ⚠️ Key Considerations
+
+1. **No `context.say()` in Tools**: Tools should only return data, not speak directly
+2. **Interruption Handling**: Consider using `context.disallow_interruptions()` during booking
+3. **Cold Starts**: LiveKit Cloud may scale down agents; Calendar API adds ~1-2s latency
+4. **Secrets in Cloud**: Use JSON content as env var, not file paths for deployment
+
+### 🚀 Deployment Checklist
+
+- [ ] Test locally with file-based service account JSON
+- [ ] Convert service account JSON to environment variable for cloud
+- [ ] Deploy with `lk agent deploy --secrets-file secrets.env`
+- [ ] Test qualification logic in production
+- [ ] Verify booking creates events with correct details
+- [ ] Confirm unqualified users get self-serve guidance (no human offer)
