@@ -116,3 +116,97 @@ uv run python src/agent.py console
 # Run in dev mode (for use with frontend/telephony)
 uv run python src/agent.py dev
 ```
+
+## Secrets Management
+
+### Important: LiveKit Cloud Secrets Override Code Defaults
+
+**CRITICAL**: Secrets set in LiveKit Cloud will **always override** environment variable defaults in your code, even if the code has correct fallback values. This can lead to unexpected behavior if secrets are configured incorrectly.
+
+### Required Secrets Configuration
+
+This agent requires the following secrets to be correctly configured in LiveKit Cloud:
+
+#### Unleash Knowledge Base Integration
+```bash
+# REQUIRED: The Unleash API endpoint (NOTE: must include "e-" prefix)
+UNLEASH_BASE_URL=https://e-api.unleash.so
+
+# REQUIRED: Your Unleash API authentication token
+UNLEASH_API_KEY=<your-unleash-api-key>
+
+# REQUIRED: The Intercom app ID for filtering search results
+UNLEASH_INTERCOM_APP_ID=intercom
+
+# OPTIONAL: Cache TTL in seconds (default: 300)
+UNLEASH_CACHE_TTL=300
+
+# OPTIONAL: Assistant ID for personalized responses
+UNLEASH_ASSISTANT_ID=<your-assistant-id>
+```
+
+**Common Mistakes to Avoid:**
+- ❌ `UNLEASH_BASE_URL=https://api.unleash.so` (WRONG - missing "e-" prefix)
+- ✅ `UNLEASH_BASE_URL=https://e-api.unleash.so` (CORRECT)
+
+### Managing Secrets
+
+```bash
+# View current secrets (values are hidden for security)
+lk agent secrets
+
+# Update secrets from .env.local file
+lk agent update-secrets --secrets-file .env.local
+
+# Update a single secret
+lk agent update-secrets --secrets "UNLEASH_BASE_URL=https://e-api.unleash.so"
+
+# Update multiple secrets at once
+lk agent update-secrets --secrets "UNLEASH_BASE_URL=https://e-api.unleash.so,UNLEASH_CACHE_TTL=300"
+```
+
+### ⚠️ Important: Restart Required After Secret Changes
+
+**When you update secrets, you MUST restart the agent for changes to take effect:**
+
+```bash
+# After updating secrets, always restart
+lk agent restart
+```
+
+Why? LiveKit Cloud workers load secrets at startup. Existing running workers will continue using old secret values until restarted. Simply updating secrets is not enough - the agent won't pick them up until a new worker process starts.
+
+### Verifying Secrets Are Working
+
+After updating secrets and restarting, verify they're being used correctly:
+
+1. **Check agent logs for startup messages:**
+   ```bash
+   lk agent logs | grep -i unleash
+   ```
+
+2. **Test the agent:**
+   - Create a new session via Agent Playground
+   - Ask a question that requires Unleash search (e.g., "How do I integrate with Salesforce?")
+   - Verify no "trouble searching the knowledge base" errors
+
+3. **Check logs for successful API calls:**
+   ```bash
+   lk agent logs | grep "Searching Intercom source"
+   ```
+   - Should see: `Searching Intercom source (appId: intercom) for query: '...'`
+   - Should NOT see: `Unleash API HTTP error: 404 Not Found`
+
+### Troubleshooting Secrets Issues
+
+If you see errors like:
+- `404 Not Found for url 'https://api.unleash.so/search'` → Wrong URL (missing "e-" prefix)
+- `401 Unauthorized` → Invalid or missing UNLEASH_API_KEY
+- `I had trouble searching the knowledge base` → Check secrets are set and agent has been restarted
+
+**Recovery steps:**
+1. Verify secrets are correct: `lk agent secrets`
+2. Update any incorrect secrets: `lk agent update-secrets --secrets "KEY=value"`
+3. **Always restart after updating:** `lk agent restart`
+4. Wait for new worker to start (check `lk agent status` for active replicas)
+5. Test with a new session (old sessions won't use new secrets)

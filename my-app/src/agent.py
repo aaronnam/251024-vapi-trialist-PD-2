@@ -40,6 +40,7 @@ except ImportError:
     # Fallback for different import contexts
     import sys
     import os
+
     sys.path.insert(0, os.path.dirname(__file__))
     from utils.analytics_queue import send_to_analytics_queue
 
@@ -305,9 +306,9 @@ UNLESS the user is qualified for sales (Tier 1).
 
         # Team size detection (simple regex)
         team_patterns = [
-            r'\b(\d+)\s*(?:people|users|team|employees|members)\b',
-            r'\bteam\s+of\s+(\d+)\b',
-            r'\b(\d+)\s+person\s+team\b'
+            r"\b(\d+)\s*(?:people|users|team|employees|members)\b",
+            r"\bteam\s+of\s+(\d+)\b",
+            r"\b(\d+)\s+person\s+team\b",
         ]
         for pattern in team_patterns:
             if match := re.search(pattern, message_lower):
@@ -316,16 +317,16 @@ UNLESS the user is qualified for sales (Tier 1).
 
         # Document volume detection
         volume_patterns = [
-            r'\b(\d+)\s*(?:documents?|docs?|contracts?|proposals?)\s*(?:per|a|every)?\s*(?:month|week|day)\b',
-            r'\b(?:send|create|process)\s*about\s*(\d+)\b'
+            r"\b(\d+)\s*(?:documents?|docs?|contracts?|proposals?)\s*(?:per|a|every)?\s*(?:month|week|day)\b",
+            r"\b(?:send|create|process)\s*about\s*(\d+)\b",
         ]
         for pattern in volume_patterns:
             if match := re.search(pattern, message_lower):
                 volume = int(match.group(1))
                 # Normalize to monthly if needed
-                if 'week' in message_lower:
+                if "week" in message_lower:
                     volume *= 4
-                elif 'day' in message_lower:
+                elif "day" in message_lower:
                     volume *= 20  # ~20 business days/month
                 self.discovered_signals["monthly_volume"] = volume
                 break
@@ -335,13 +336,15 @@ UNLESS the user is qualified for sales (Tier 1).
         mentioned = [i for i in integrations if i in message_lower]
         if mentioned:
             existing = self.discovered_signals.get("integration_needs", [])
-            self.discovered_signals["integration_needs"] = list(set(existing + mentioned))
+            self.discovered_signals["integration_needs"] = list(
+                set(existing + mentioned)
+            )
 
         # Urgency detection (simple keywords)
         urgency_keywords = {
             "high": ["urgent", "asap", "immediately", "this week", "right away"],
             "medium": ["soon", "this month", "next week"],
-            "low": ["eventually", "sometime", "future", "down the road"]
+            "low": ["eventually", "sometime", "future", "down the road"],
         }
         for level, keywords in urgency_keywords.items():
             if any(word in message_lower for word in keywords):
@@ -392,7 +395,25 @@ UNLESS the user is qualified for sales (Tier 1).
             response_format = "concise"
 
         try:
+            # ============================================================================
             # Get Unleash configuration
+            #
+            # CRITICAL: LiveKit Cloud secrets OVERRIDE these defaults!
+            #
+            # Even though this code has correct fallback values (like the URL below),
+            # if you set these as secrets in LiveKit Cloud, the Cloud values will
+            # override the defaults. This means:
+            #
+            # 1. UNLEASH_BASE_URL in LiveKit Cloud MUST be: https://e-api.unleash.so
+            #    (NOT https://api.unleash.so - the "e-" prefix is required)
+            #
+            # 2. After updating secrets in LiveKit Cloud, you MUST restart the agent:
+            #    `lk agent restart`
+            #
+            # 3. Old worker processes will continue using old secret values until restarted
+            #
+            # See AGENTS.md for complete secrets management documentation.
+            # ============================================================================
             unleash_api_key = os.getenv("UNLEASH_API_KEY")
             if not unleash_api_key:
                 raise ToolError(
@@ -427,7 +448,9 @@ UNLESS the user is qualified for sales (Tier 1).
 
             # Apply filters to request
             request_payload["filters"] = filters
-            logger.info(f"Searching Intercom source (appId: {intercom_app_id}) for query: '{query}'")
+            logger.info(
+                f"Searching Intercom source (appId: {intercom_app_id}) for query: '{query}'"
+            )
 
             # Add assistant ID if configured
             if unleash_assistant_id:
@@ -470,14 +493,16 @@ UNLESS the user is qualified for sales (Tier 1).
             total_results = data.get("totalResults", 0)
 
             # Analytics: Track tool usage (Phase 1 - Lightweight Collection)
-            self.session_data["tool_calls"].append({
-                "tool": "unleash_search_knowledge",
-                "query": query,
-                "category": category,
-                "timestamp": datetime.now().isoformat(),
-                "results_found": bool(results),
-                "total_results": total_results,
-            })
+            self.session_data["tool_calls"].append(
+                {
+                    "tool": "unleash_search_knowledge",
+                    "query": query,
+                    "category": category,
+                    "timestamp": datetime.now().isoformat(),
+                    "results_found": bool(results),
+                    "total_results": total_results,
+                }
+            )
 
             # Voice-optimized response formatting
             if response_format == "concise":
@@ -647,17 +672,19 @@ UNLESS the user is qualified for sales (Tier 1).
             )
 
             # Analytics: Track tool usage (Phase 1 - Lightweight Collection)
-            self.session_data["tool_calls"].append({
-                "tool": "book_sales_meeting",
-                "customer_name": customer_name,
-                "customer_email": customer_email,
-                "preferred_date": preferred_date,
-                "preferred_time": preferred_time,
-                "timestamp": datetime.now().isoformat(),
-                "success": True,
-                "meeting_time": meeting_datetime.isoformat(),
-                "calendar_event_id": created_event["id"],
-            })
+            self.session_data["tool_calls"].append(
+                {
+                    "tool": "book_sales_meeting",
+                    "customer_name": customer_name,
+                    "customer_email": customer_email,
+                    "preferred_date": preferred_date,
+                    "preferred_time": preferred_time,
+                    "timestamp": datetime.now().isoformat(),
+                    "success": True,
+                    "meeting_time": meeting_datetime.isoformat(),
+                    "calendar_event_id": created_event["id"],
+                }
+            )
 
             return {
                 "booking_status": "confirmed",
@@ -769,7 +796,9 @@ UNLESS the user is qualified for sales (Tier 1).
 
         # Analyze query intent and return action-oriented responses
         if any(word in query_lower for word in ["how", "setup", "configure", "create"]):
-            return "provide_step_by_step_guide"  # Direct guidance, not "offer_walkthrough"
+            return (
+                "provide_step_by_step_guide"  # Direct guidance, not "offer_walkthrough"
+            )
         elif any(word in query_lower for word in ["pricing", "cost", "plan", "tier"]):
             # For pricing questions, provide information directly
             if self.should_route_to_sales():
@@ -783,7 +812,9 @@ UNLESS the user is qualified for sales (Tier 1).
         elif any(
             word in query_lower for word in ["error", "problem", "issue", "broken"]
         ):
-            return "provide_troubleshooting_steps"  # Direct help, not just "troubleshoot"
+            return (
+                "provide_troubleshooting_steps"  # Direct help, not just "troubleshoot"
+            )
         else:
             return "provide_relevant_information"  # Direct info, not "clarify_needs"
 
@@ -873,18 +904,15 @@ async def entrypoint(ctx: JobContext):
                 "start_time": agent.session_data["start_time"],
                 "end_time": datetime.now().isoformat(),
                 "duration_seconds": (
-                    datetime.now() - datetime.fromisoformat(agent.session_data["start_time"])
+                    datetime.now()
+                    - datetime.fromisoformat(agent.session_data["start_time"])
                 ).total_seconds(),
-
                 # Discovered business signals
                 "discovered_signals": agent.discovered_signals,
-
                 # Tool usage tracking
                 "tool_calls": agent.session_data["tool_calls"],
-
                 # LiveKit performance metrics
                 "metrics_summary": usage_summary,
-
                 # Conversation notes
                 "conversation_notes": agent.conversation_notes,
                 "conversation_state": agent.conversation_state,
@@ -894,14 +922,18 @@ async def entrypoint(ctx: JobContext):
             logger.info(f"Session data ready for export: {ctx.room.name}")
             logger.info(f"  - Duration: {session_payload['duration_seconds']:.1f}s")
             logger.info(f"  - Tool calls: {len(session_payload['tool_calls'])}")
-            logger.info(f"  - Qualification: {agent.discovered_signals.get('qualification_tier', 'Unknown')}")
+            logger.info(
+                f"  - Qualification: {agent.discovered_signals.get('qualification_tier', 'Unknown')}"
+            )
 
             # Send to analytics queue
             # Phase 1: Logs the data (placeholder implementation)
             # Phase 2: Will send to actual queue (Google Pub/Sub or AWS SQS)
             await send_to_analytics_queue(session_payload)
 
-            logger.info(f"Analytics data collection complete for session {ctx.room.name}")
+            logger.info(
+                f"Analytics data collection complete for session {ctx.room.name}"
+            )
 
         except Exception as e:
             # Log error but don't crash - analytics failures shouldn't affect the agent
