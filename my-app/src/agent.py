@@ -31,9 +31,29 @@ class PandaDocTrialistAgent(Agent):
         super().__init__(
             instructions="""You are Sarah, a friendly and knowledgeable Trial Success Specialist at PandaDoc.
 
+## MANDATORY TOOL USAGE RULE #1
+BEFORE RESPONDING TO ANY USER MESSAGE, CHECK:
+1. Does it contain ANY PandaDoc-related words? (document, template, sign, send, create, pricing, feature, etc.)
+2. Does it contain ANY question words? (how, what, when, where, why, can, does, is, etc.)
+3. Is the user asking for help with ANYTHING?
+
+IF YES TO ANY: You MUST call unleash_search_knowledge() IMMEDIATELY before speaking.
+
+Examples where you MUST use the tool:
+- "How do I create templates?" → unleash_search_knowledge(query="How do I create templates?", response_format="concise")
+- "What are the pricing plans?" → unleash_search_knowledge(query="What are the pricing plans?", response_format="concise")
+- "Help with document signing" → unleash_search_knowledge(query="Help with document signing", response_format="concise")
+- "Tell me about integrations" → unleash_search_knowledge(query="Tell me about integrations", response_format="concise")
+
+IMPORTANT: Always use response_format="concise" for voice conversations. NEVER use "json" or "detailed".
+
+The ONLY exception: If the user asks about something clearly unrelated to PandaDoc (like "quantum computing"), politely redirect them to PandaDoc topics.
+
+NEVER answer PandaDoc questions from memory - ALWAYS search the knowledge base first.
+
 ## Your Role
 You help trial users maximize their PandaDoc experience through personalized, voice-based enablement.
-Your goal is to understand their needs, provide immediate value, and identify qualified opportunities naturally.
+Your goal is to understand their needs, provide immediate value through knowledge base search, and identify qualified opportunities naturally.
 
 ## Conversation Style
 - Warm and conversational, not scripted or robotic
@@ -210,20 +230,33 @@ with event_type="qualification" and include the discovered signals in the data p
         context: RunContext,
         query: str,
         category: Optional[str] = None,
-        response_format: str = "concise"
+        response_format: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Search PandaDoc knowledge base and provide actionable guidance.
+        """Search PandaDoc knowledge base - REQUIRED for ALL PandaDoc questions.
 
-        Use this tool when the user asks about PandaDoc features, pricing, integrations, or needs help.
-        This tool both searches for information AND suggests next steps.
+        THIS IS A MANDATORY TOOL. You MUST call this for:
+        - ANY question starting with: how, what, when, where, why, can, does, is
+        - ANY mention of: documents, templates, signing, sending, pricing, features, integrations
+        - ANY request for help, guidance, or troubleshooting
+        - LITERALLY ANYTHING related to PandaDoc functionality
+
+        DO NOT attempt to answer from memory. ALWAYS search first.
 
         Args:
-            query: Natural language question about PandaDoc
-            category: Optional - filter by "features", "pricing", "integrations", "troubleshooting"
-            response_format: "concise" for essential info (voice-optimized), "detailed" for comprehensive results
+            query: The user's exact question - pass it VERBATIM, do not modify
+            category: Optional - ONLY for "features", "pricing", "integrations", or "troubleshooting"
+            response_format: Use "concise" (default) for voice - never use "detailed"
+
+        Returns:
+            Dict with search results to interpret for the user
         """
-        # Voice-optimized filler (keep it short for low latency)
-        await context.say("Let me find that for you...")
+        # Note: Tools in LiveKit should not speak directly - they return data for the agent to interpret
+
+        # Validate and normalize response_format - default to concise for voice
+        if not response_format or response_format not in ["concise", "detailed"]:
+            if response_format:
+                logger.warning(f"Invalid response_format '{response_format}', defaulting to 'concise'")
+            response_format = "concise"
 
         try:
             # Get Unleash configuration
@@ -264,7 +297,7 @@ with event_type="qualification" and include the discovered signals in the data p
                         "Content-Type": "application/json"
                     },
                     json=request_payload,
-                    timeout=5.0  # 5 second timeout for voice responsiveness
+                    timeout=10.0  # 10 second timeout balanced for voice response
                 )
 
                 # Check for API errors
@@ -279,7 +312,7 @@ with event_type="qualification" and include the discovered signals in the data p
                     raise ToolError("The knowledge base is temporarily unavailable. I can still help you though!")
 
                 response.raise_for_status()
-                data = response.json()
+                data = response.json()  # httpx returns dict directly, not a coroutine
 
             # Extract results
             results = data.get("results", [])
@@ -325,7 +358,7 @@ with event_type="qualification" and include the discovered signals in the data p
 
         except httpx.TimeoutException:
             # Timeout - offer alternative help
-            logger.warning("Unleash API timeout after 5 seconds")
+            logger.warning("Unleash API timeout after 10 seconds")
             raise ToolError(
                 "The search is taking longer than expected. "
                 "Let me help you directly - what specific part of PandaDoc would you like to explore?"
