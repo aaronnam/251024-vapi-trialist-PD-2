@@ -1447,13 +1447,20 @@ async def entrypoint(ctx: JobContext):
         ),
     )
 
-    # Join the room and connect to the user
-    await ctx.connect()
-
     # Extract user email from participant metadata
+    # Note: session.start() already connects to the room, so no need for ctx.connect()
     try:
-        # Wait for first participant (the user who triggered the agent)
-        participant = await ctx.wait_for_participant()
+        # Get the participant (check existing participants first, then wait if needed)
+        # This handles both cases: user already in room, or user joins after agent
+        if ctx.room.remote_participants:
+            # User is already in the room - get the first participant
+            participant = list(ctx.room.remote_participants.values())[0]
+            logger.info(f"Found existing participant: {participant.identity}")
+        else:
+            # Wait for user to join
+            logger.info("Waiting for participant to join...")
+            participant = await ctx.wait_for_participant()
+            logger.info(f"Participant joined: {participant.identity}")
 
         if participant.metadata:
             # Parse the JSON metadata

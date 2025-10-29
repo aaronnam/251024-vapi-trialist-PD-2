@@ -1143,6 +1143,42 @@ This plan addresses the critical risks while maintaining simplicity and elegance
 **Next Engineer Action:**
 Complete Task 3.1 Part C (Consent Tracking Code) - CRITICAL legal requirement before deployment
 
+6. **Priority 4: Cost Control & Monitoring** ✅
+   - **Task 4.1: Real-Time Cost Tracking** - COMPLETED (October 29, 2024)
+     - File: `my-app/src/agent.py` (lines 270-279, 281-293, 1241-1286)
+     - Implementation: Real-time cost calculation from direct provider metrics
+     - What's tracked:
+       - OpenAI (gpt-4.1-mini): input tokens, output tokens, cost
+       - Deepgram (nova-2): audio minutes, cost per minute
+       - ElevenLabs (turbo): character count, cost per character
+       - Unleash: search count
+     - Features:
+       - Provider-specific pricing configuration (lines 287-293)
+       - Per-provider cost accumulation (lines 1254-1275)
+       - Total session cost rollup
+       - Cost limit enforcement (default: $5 per session, $100 per day)
+     - Integration: Costs exported to analytics payload as "cost_summary"
+
+   - **Task 4.2: Circuit Breaker for Direct Provider APIs** - COMPLETED (October 29, 2024)
+     - File: `my-app/src/agent.py` (lines 295-306, 351-425)
+     - Implementation: Provider-specific failure tracking and auto-recovery
+     - Features:
+       - Separate circuit breaker state for each provider (OpenAI, Deepgram, ElevenLabs, Unleash)
+       - Failure threshold: 3 consecutive failures to open circuit
+       - Auto-reset: Cooldown period of 60 seconds, then circuit closes
+       - Active usage in Unleash search (line 685-689): Circuit checks before API calls
+       - Success/failure tracking: `record_provider_success()` and `record_provider_failure()` methods
+     - Behavior:
+       - When circuit is OPEN: Graceful fallback response (no API call attempt)
+       - When circuit is CLOSED: Normal operation
+       - Auto-recovery: After cooldown, circuit half-opens and tries again
+     - Benefits: Prevents cascade failures from provider outages, graceful degradation
+
+   - **Deployment Status:**
+     - Version v20251029174923 (initial Priority 4 deployment)
+     - Version v20251029181918 (with Priority 5 additions)
+     - All components integrated and running
+
 7. **Priority 5: Silence Detection & Session Rate Limiting** ✅
    - **Task 5.1: Silence Detection** - COMPLETED (October 29, 2024)
      - File: `my-app/src/agent.py` (lines 1161, 1233-1239)
