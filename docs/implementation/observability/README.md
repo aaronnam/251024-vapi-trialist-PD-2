@@ -85,17 +85,35 @@ Total time: 1-2 minutes
 
 ## Files in This Directory
 
+### Quick Start Guides
 | File | Purpose |
 |------|---------|
-| `QUICK_START_DEBUGGING.md` | 30-second debugging guide (START HERE) |
-| `DEBUGGING_FAILED_CALLS.md` | Complete troubleshooting guide with patterns |
+| `README.md` | **This file** - Overview and navigation |
+| `QUICK_START_DEBUGGING.md` | 30-second debugging guide when alerts fire |
 | `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` | How to use dashboard + Langfuse together |
-| `PERFORMANCE_DASHBOARD_SPEC.md` | Full implementation spec with AWS CLI commands |
+
+### User ID in Langfuse (NEW - Answer to Your Question)
+| File | Purpose |
+|------|---------|
+| `LANGFUSE_USER_ID_COMPLETE_SUMMARY.md` | **Start here** - Complete overview |
+| `LANGFUSE_USER_ID_GUIDE.md` | Complete technical explanation |
+| `USER_ID_IMPLEMENTATION_SUMMARY.md` | What changed and how to test |
+| `VERIFY_USER_ID.md` | 2-minute verification checklist |
+| `USER_ID_FAQ.md` | Answers to common questions |
+
+### Implementation & Reference
+| File | Purpose |
+|------|---------|
+| `PERFORMANCE_DASHBOARD_SPEC.md` | Full dashboard spec with AWS CLI commands |
+| `QUICK_IMPLEMENTATION.md` | Tracing setup guide |
+| `OBSERVABILITY_STRATEGY.md` | Overall strategy and design decisions |
+| `DEBUGGING_FAILED_CALLS.md` | Complete troubleshooting guide with patterns |
+
+### Configuration Files
+| File | Purpose |
+|------|---------|
 | `dashboard-template.json` | CloudWatch dashboard JSON definition |
 | `dashboard-links.md` | Quick links to all monitoring tools |
-| `OBSERVABILITY_STRATEGY.md` | Overall strategy and design decisions |
-| `QUICK_IMPLEMENTATION.md` | Implementation guide (historical) |
-| `README.md` | This file |
 
 ---
 

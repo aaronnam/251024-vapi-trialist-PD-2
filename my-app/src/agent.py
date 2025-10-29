@@ -1537,6 +1537,20 @@ async def entrypoint(ctx: JobContext):
             agent.session_data["user_email"] = user_email
             agent.session_data["user_metadata"] = metadata
 
+            # Update Langfuse with user ID for better trace filtering and analysis
+            if user_email and trace_provider:
+                try:
+                    from opentelemetry import trace as otel_trace
+                    tracer = otel_trace.get_tracer(__name__)
+                    # Create a span to capture user identification
+                    with tracer.start_as_current_span("participant_identified") as span:
+                        span.set_attribute("langfuse.user.id", user_email)
+                        span.set_attribute("user.email", user_email)
+                        span.set_attribute("participant.identity", participant.identity)
+                    logger.info(f"✅ Langfuse updated with user ID: {user_email} (participant: {participant.identity})")
+                except Exception as e:
+                    logger.warning(f"Could not update Langfuse with user ID: {e}")
+
             if user_email:
                 logger.info(f"✅ Session started for email: {user_email}")
             else:
