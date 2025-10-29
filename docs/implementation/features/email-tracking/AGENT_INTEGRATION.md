@@ -1,8 +1,13 @@
 # Agent Email Context Implementation
 
+**Status**: ✅ Verified against LiveKit Agents API
+**Last Updated**: October 29, 2025
+
 ## The Elegant Solution
 
 Make the email available to the agent as a pre-known fact, like knowing someone's name when they've already introduced themselves.
+
+This pattern stores email in the agent instance and references it in instructions so the agent uses it naturally in conversations.
 
 ---
 

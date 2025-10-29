@@ -1286,9 +1286,8 @@ async def entrypoint(ctx: JobContext):
             # TODO: Implement graceful session termination or warning to user
 
     # Handle user silence/inactivity to prevent dead air charges
-    @session.on("user_state_changed")
-    async def on_user_state(ev):
-        """Handle user state changes - detect prolonged silence."""
+    async def handle_user_state_changed(ev):
+        """Handle user state changes - detect prolonged silence (async logic)."""
         nonlocal silence_warning_given
 
         if ev.new_state == "away":
@@ -1314,6 +1313,11 @@ async def entrypoint(ctx: JobContext):
         elif ev.new_state == "speaking":
             # User is speaking again - reset warning flag
             silence_warning_given = False
+
+    @session.on("user_state_changed")
+    def on_user_state(ev):
+        """Synchronous callback for user state changes."""
+        asyncio.create_task(handle_user_state_changed(ev))
 
     # Check session limits periodically
     async def check_session_limits():

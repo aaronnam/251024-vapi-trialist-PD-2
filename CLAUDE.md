@@ -84,39 +84,72 @@ These guides inform the design decisions in the implementation.
 4. **Maintain code quality** - Use `ruff format` and `ruff check`
 
 ### Understanding Requirements
-- Reference `/docs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` for business requirements
+- Reference `/docs/specs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` for business requirements
 - This spec defines what the agent should do and why
 - It includes detailed user personas, qualification logic, and integration requirements
 
 ## Documentation Organization
 
-The `/docs/` directory is organized into three main areas:
+The `/docs/` directory is organized into five main areas:
 
-### Core Specifications (Root Level)
-- `PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` - Primary product specification
-- `PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` - Detailed specification variant
-- `VAPI_DASHBOARD_PANDADOC_FILLED.md` - VAPI configuration reference
+### Product Specifications (`/docs/specs/`)
+Product requirements and design specifications:
+- `PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` - Quick reference specification
+- `PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md` - Detailed specification with all requirements
+- `VAPI_DASHBOARD_PANDADOC_FILLED.md` - VAPI platform configuration reference
+- `README.md` - Specification navigation guide
+
+Use these to understand WHAT we're building and WHY.
 
 ### Implementation Documentation (`/docs/implementation/`)
-Implementation plans, analysis, and requirement mappings:
-- `IMPLEMENTATION_PLAN.md` - Step-by-step implementation roadmap with phases
-- `REQUIREMENTS_MAP.md` - Maps spec requirements to implementation tasks
-- `REQUIREMENTS_MATRIX.csv` - Tabular view of requirement coverage
-- `ANALYSIS.md` - Technical analysis and architectural decisions
-- `README.md` - Overview of implementation documentation
+Implementation plans, guides, and technical architecture:
+- `IMPLEMENTATION_PLAN.md` - Complete implementation roadmap with 9 epics and 41 tasks
+- `REQUIREMENTS_MAP.md` - Maps spec requirements to LiveKit implementation patterns
+- `REQUIREMENTS_MATRIX.csv` - Requirement traceability matrix
+- `ANALYSIS.md` - ROI analysis and timeline projections
+- `features/` - Feature-specific implementation guides:
+  - `email-tracking/` - Email capture and metadata integration
+  - `silence-detection/` - Silence detection and handling
+- `integrations/` - Third-party platform integration guides:
+  - `unleash/` - Feature flagging with Unleash
+  - *(Salesforce, HubSpot, Amplitude in planning)*
+- `analytics/` - Analytics pipeline and data flow documentation
+- `observability/` - Monitoring, tracing, and observability strategy
+- `README.md` - Implementation documentation overview
 
-Use these when planning development work or tracking progress against requirements.
+Use these when planning development work or implementing specific features.
+
+### Security & Risk Analysis (`/docs/security/`)
+Security assessments, risk analysis, and mitigation strategies:
+- `PRODUCTION_READINESS.md` - Production readiness checklist
+- `AGENT_RISK_MITIGATION_TASKS.md` - Prioritized risk mitigation tasks
+- `MITIGATION_IMPLEMENTATION_GUIDE.md` - Implementation steps for mitigations
+- `assessments/` - Detailed risk assessments and analysis
+- `README.md` - Security and risk documentation overview
+
+Use these to understand critical risks and plan mitigation work.
 
 ### Research Documentation (`/docs/research/`)
 Technical deep dives and condensed reference guides:
-- `docs/research/livekit/` - LiveKit framework research and patterns
-- `docs/research/quick-references/` - Quick reference guides including:
+- `livekit/` - LiveKit framework research and patterns
+- `quick-references/` - Quick reference guides including:
   - `function-tools-summary.md` - LiveKit function/tool patterns
   - `voice-pipeline-quick-ref.md` - Voice pipeline component reference
   - `testing-quick-ref.md` - Testing patterns and examples
-  - `README.md` - Guide to using quick references
+- `README.md` - Research documentation overview
 
 Use these for quick lookups when implementing specific features or debugging.
+
+### Project Status & Task Tracking (`.project-status/`)
+Active work tracking and team coordination (temporary documents):
+- `IMPLEMENTATION_SUMMARY.md` - Summary of completed implementation
+- `YOUR_NEXT_STEPS_AGENT_INTEGRATION.md` - Next actions and in-progress work
+- `DOCUMENTATION_ORGANIZATION_ANALYSIS.md` - Documentation reorganization plan
+- `completed-tasks/` - Archive of finished work
+- `coordination/` - Team communications and decisions
+- `README.md` - Guide to using this directory
+
+Use this for tracking active work and team coordination. By default tracked in git, but can be gitignored if you prefer ephemeral task tracking.
 
 ### Environment Setup
 The voice agent requires LiveKit Cloud credentials. Set these in `/my-app/.env.local`:

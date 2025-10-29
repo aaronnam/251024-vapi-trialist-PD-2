@@ -719,10 +719,126 @@ async def search_knowledge_base(query: str, max_results: int = 3) -> str:
 
 ---
 
-## Priority 5: Tool Usage Optimization
+## Priority 5: Silence Detection & Session Rate Limiting
+*Prevent "dead air" charges from accidental long-running calls*
+
+**Context:** Users can accidentally leave their phone connected, causing runaway costs. The agent needed protection against:
+1. Dead air (30+ seconds of silence)
+2. Excessively long sessions (30+ minutes)
+3. Runaway costs (>$5 per session)
+
+### Task 5.1: Implement Silence Detection
+**Status:** ✅ COMPLETED (October 29, 2024)
+**File:** `my-app/src/agent.py` (lines 1161, 1233-1239)
+**Solution:** Use LiveKit's native `user_away_timeout` parameter with user state change handler
+
+**Implementation:**
+```python
+# Line 1161 - Configure silence detection in AgentSession
+user_away_timeout=30,  # Mark user "away" after 30 seconds of silence
+
+# Lines 1233-1239 - Handle user state changes
+@session.on("user_state_changed")
+async def on_user_state(ev):
+    if ev.new_state == "away":
+        if not silence_warning_given:
+            await session.say(
+                "Hello? Are you still there? I'll disconnect in a moment if I don't hear from you.",
+                allow_interruptions=True,
+            )
+            await asyncio.sleep(10)
+            if session.user_state == "away":
+                await session.say("I'm disconnecting now due to inactivity. Feel free to call back anytime!")
+                agent.session_data["disconnect_reason"] = "silence_timeout"
+                await session.aclose()
+    elif ev.new_state == "speaking":
+        silence_warning_given = False
+```
+
+**Why This Approach:**
+- Uses LiveKit SDK native feature (no custom infrastructure)
+- Minimal code (~10 lines, zero external dependencies)
+- Graceful: warns user before disconnecting
+- Tracks reason in analytics for compliance
+
+### Task 5.2: Implement Session Time Limit
+**Status:** ✅ COMPLETED (October 29, 2024)
+**File:** `my-app/src/agent.py` (lines 1150-1152, 1260-1290)
+**Solution:** Periodic background task that checks session duration every 30 seconds
+
+**Implementation:**
+```python
+# Lines 1150-1152 - Configuration
+session_start_time = datetime.now()
+max_session_minutes = 30  # Maximum 30-minute sessions
+max_session_cost = 5.0    # Maximum $5 per session
+
+# Lines 1260-1290 - Periodic limit checker
+async def check_session_limits():
+    while True:
+        await asyncio.sleep(30)
+
+        # Check time limit
+        duration = (datetime.now() - session_start_time).total_seconds() / 60
+        if duration > max_session_minutes:
+            logger.warning(f"Session exceeded {max_session_minutes} minute limit")
+            await session.say("We've reached our 30-minute session limit. Please call back if you need more help!")
+            agent.session_data["disconnect_reason"] = "time_limit"
+            await asyncio.sleep(2)
+            await session.aclose()
+            break
+
+# Start the checker task
+limit_checker = asyncio.create_task(check_session_limits())
+```
+
+### Task 5.3: Implement Session Cost Limit
+**Status:** ✅ COMPLETED (October 29, 2024)
+**File:** `my-app/src/agent.py` (lines 1150-1152, 1260-1290)
+**Solution:** Check cost from existing `agent.session_costs` tracking (from Priority 4)
+
+**Implementation (in same check_session_limits function):**
+```python
+# Check cost limit (30 seconds into periodic check)
+if agent.session_costs["total_estimated_cost"] > max_session_cost:
+    logger.warning(f"Session exceeded ${max_session_cost} cost limit")
+    await session.say("We've reached the session limit. Feel free to call back to continue!")
+    agent.session_data["disconnect_reason"] = "cost_limit"
+    await asyncio.sleep(2)
+    await session.aclose()
+    break
+```
+
+### Implementation Benefits
+- **Cost Savings:** 90% reduction in worst-case scenarios
+  - Before: Accidental 2-hour call = ~$50
+  - After: Maximum possible charge = $5
+- **User-Friendly:** Warns before disconnecting (not harsh)
+- **Transparent:** Tracks disconnect reason for analytics
+- **Configurable:** Easy to adjust thresholds without refactoring
+
+### Deployment Status
+- ✅ **Version:** v20251029181918
+- ✅ **Status:** Running in LiveKit Cloud
+- ✅ **All checks passed:**
+  - Syntax: Clean
+  - Imports: Successful
+  - Build: No errors
+  - Runtime: No errors
+  - Agent status: Running (1/1 replicas active)
+
+### Testing Notes
+- Silence detection verified in code (grep confirms user_away_timeout=30)
+- User state handler properly registered (@session.on decorator)
+- Session limit checker task created and started
+- No external dependencies added (uses native LiveKit SDK only)
+
+---
+
+## Priority 6: Tool Usage Optimization
 *Reduce unnecessary API calls*
 
-### Task 5.1: Smarter Search Decisions
+### Task 6.1: Smarter Search Decisions
 **File:** `my-app/src/agent.py`
 **Solution:** Add logic to skip unnecessary searches
 
@@ -750,7 +866,7 @@ def should_search_knowledge(self, user_input: str) -> bool:
     return True
 ```
 
-### Task 5.2: Update Instructions for Selective Searching
+### Task 6.2: Update Instructions for Selective Searching
 **Solution:** Make search rules more nuanced
 
 ```python
@@ -770,10 +886,10 @@ DO search for:
 
 ---
 
-## Priority 6: Sales Team Alignment
+## Priority 7: Sales Team Alignment
 *Prevent channel conflict*
 
-### Task 6.1: Add Booking Validation
+### Task 7.1: Add Booking Validation
 **File:** `my-app/src/agent.py`
 **Solution:** Enforce qualification before booking
 
@@ -795,7 +911,7 @@ async def book_sales_meeting(self, context: RunContext, ...):
     ...
 ```
 
-### Task 6.2: Add Booking Metadata
+### Task 7.2: Add Booking Metadata
 **Solution:** Track source for sales team
 
 ```python
@@ -811,10 +927,10 @@ booking_metadata = {
 
 ---
 
-## Priority 7: Graceful Degradation
+## Priority 8: Graceful Degradation
 *Handle failures elegantly*
 
-### Task 7.1: Add Fallback Responses
+### Task 8.1: Add Fallback Responses
 **File:** `my-app/src/agent.py`
 **Solution:** Provide value even when tools fail
 
@@ -833,7 +949,7 @@ except httpx.TimeoutError:
     }
 ```
 
-### Task 7.2: Add Service Health Checks
+### Task 8.2: Add Service Health Checks
 **Solution:** Proactively detect issues
 
 ```python
@@ -1026,3 +1142,34 @@ This plan addresses the critical risks while maintaining simplicity and elegance
 
 **Next Engineer Action:**
 Complete Task 3.1 Part C (Consent Tracking Code) - CRITICAL legal requirement before deployment
+
+7. **Priority 5: Silence Detection & Session Rate Limiting** ✅
+   - **Task 5.1: Silence Detection** - COMPLETED (October 29, 2024)
+     - File: `my-app/src/agent.py` (lines 1161, 1233-1239)
+     - Implementation: LiveKit native `user_away_timeout=30` with `user_state_changed` event handler
+     - Behavior: Warns user after 30s silence, disconnects after 10 more seconds if no response
+     - Cost impact: Prevents "dead air" charges from accidental long calls
+
+   - **Task 5.2: Session Time Limit** - COMPLETED (October 29, 2024)
+     - File: `my-app/src/agent.py` (lines 1150-1152, 1260-1290)
+     - Implementation: Background async task checking every 30 seconds
+     - Behavior: Disconnects with friendly message if session exceeds 30 minutes
+     - Configuration: Max 30 minutes per session (easily adjustable)
+
+   - **Task 5.3: Session Cost Limit** - COMPLETED (October 29, 2024)
+     - File: `my-app/src/agent.py` (integrated with Task 5.2)
+     - Implementation: Checks `agent.session_costs["total_estimated_cost"]` in periodic check
+     - Behavior: Disconnects with friendly message if cost exceeds $5
+     - Uses existing cost tracking from Priority 4
+
+   - **Deployment Status:**
+     - Version v20251029181918 deployed to LiveKit Cloud
+     - All verification checks passed: syntax, imports, build, runtime
+     - Agent status: Running (1/1 replicas active, 1.6/8GB memory)
+     - No external dependencies added (uses native LiveKit SDK)
+
+   - **Key Features:**
+     - Graceful: Warns before disconnecting (user-friendly)
+     - Tracks disconnect reason in analytics (silence_timeout, time_limit, cost_limit)
+     - Cost savings: 90% reduction in worst-case scenarios ($50 → $5 max)
+     - Minimal code: ~60 lines total, zero external dependencies

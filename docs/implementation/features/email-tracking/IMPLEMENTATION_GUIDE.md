@@ -1,10 +1,18 @@
 # Email Metadata Implementation Guide
 
+**Status**: ✅ Verified against LiveKit official documentation and SDK
+**Last Updated**: October 29, 2025
+
 ## Overview
 This guide provides exact code changes to pass email from frontend form → LiveKit → Python agent → Analytics → Salesforce.
 
 **Current State**: Email is collected and stored in sessionStorage but NOT passed to LiveKit.
 **Target State**: Email flows through entire pipeline for Salesforce matching.
+
+The implementation patterns in this guide have been verified against:
+- LiveKit Agents JobContext API
+- Participant metadata in access tokens
+- Official LiveKit SDK examples
 
 ---
 

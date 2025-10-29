@@ -29,7 +29,10 @@ To get started with development:
 ## Repository Structure
 
 ```
-/Users/aaron.nam/Desktop/Repos/251024-vapi-trialist-PD-2/
+251024-vapi-trialist-PD-2/
+│
+├── CLAUDE.md                         # Guide for AI coding assistants
+├── README.md                         # This file - project overview
 │
 ├── my-app/                           # LiveKit Agents voice AI application
 │   ├── src/                          # Agent source code
@@ -37,22 +40,61 @@ To get started with development:
 │   ├── README.md                     # Quick start guide
 │   └── AGENTS.md                     # Development best practices
 │
-├── docs/                             # Comprehensive documentation
-│   ├── implementation/               # Implementation guides
-│   │   ├── IMPLEMENTATION_PLAN.md    # Detailed implementation plan
-│   │   ├── REQUIREMENTS_MAP.md       # Requirements mapping
-│   │   ├── REQUIREMENTS_MATRIX.csv   # Requirements matrix
-│   │   └── ANALYSIS.md               # Requirements analysis
+├── docs/                             # Permanent reference documentation
+│   ├── specs/                        # Product specifications
+│   │   ├── README.md                 # Specification index
+│   │   ├── PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md
+│   │   ├── PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md
+│   │   └── VAPI_DASHBOARD_PANDADOC_FILLED.md
 │   │
-│   ├── research/                     # Technical research
-│   │   ├── livekit/                  # LiveKit-specific research
-│   │   └── quick-references/         # Quick reference guides
+│   ├── implementation/               # Implementation guides & plans
+│   │   ├── README.md                 # Implementation overview
+│   │   ├── IMPLEMENTATION_PLAN.md    # Detailed implementation roadmap
+│   │   ├── REQUIREMENTS_MAP.md       # Spec → LiveKit mapping
+│   │   ├── REQUIREMENTS_MATRIX.csv   # Requirement traceability
+│   │   ├── ANALYSIS.md               # ROI analysis & timeline
+│   │   │
+│   │   ├── features/                 # Feature implementation guides
+│   │   │   ├── README.md             # Feature index
+│   │   │   ├── email-tracking/       # Email capture & metadata
+│   │   │   └── silence-detection/    # Silence detection
+│   │   │
+│   │   ├── integrations/             # Third-party integrations
+│   │   │   ├── README.md             # Integration index
+│   │   │   └── unleash/              # Feature flagging platform
+│   │   │
+│   │   ├── analytics/                # Analytics pipeline & data flow
+│   │   │   ├── README.md
+│   │   │   ├── 01-DEPLOYMENT_REFERENCE.md
+│   │   │   ├── architecture/
+│   │   │   ├── guides/
+│   │   │   └── project-history/
+│   │   │
+│   │   └── observability/            # Monitoring & tracing strategy
+│   │       ├── README.md
+│   │       ├── OBSERVABILITY_STRATEGY.md
+│   │       └── QUICK_IMPLEMENTATION.md
 │   │
-│   └── specs/                        # Product specifications
-│       ├── PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md
-│       └── PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md
+│   ├── security/                     # Security & risk analysis
+│   │   ├── README.md                 # Security index
+│   │   ├── PRODUCTION_READINESS.md   # Production readiness checklist
+│   │   ├── AGENT_RISK_MITIGATION_TASKS.md
+│   │   ├── MITIGATION_IMPLEMENTATION_GUIDE.md
+│   │   └── assessments/              # Detailed risk assessments
+│   │
+│   └── research/                     # Technical research & deep dives
+│       ├── README.md                 # Research overview
+│       ├── livekit/                  # LiveKit framework research
+│       └── quick-references/         # Quick reference guides
 │
-└── anthropic-agent-guides/           # Best practices for AI assistants
+├── .project-status/                  # Task tracking & coordination
+│   ├── README.md                     # Task tracking guide
+│   ├── completed-tasks/              # Archive of finished work
+│   └── coordination/                 # Team communications
+│
+├── anthropic-agent-guides/           # Anthropic best practices
+│
+└── .gitignore                        # Git ignore rules
 ```
 
 ## Documentation Navigation
@@ -71,25 +113,36 @@ To get started with development:
 - **[docs/research/quick-references/](docs/research/quick-references/)** - Quick reference materials
 
 ### For Product Specifications
-- **[docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md](docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md)** - Complete product specification
-- **[docs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md](docs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md)** - Streamlined specification
+- **[docs/specs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md](docs/specs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md)** - Complete product specification
+- **[docs/specs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md](docs/specs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md)** - Streamlined specification
+- **[docs/specs/README.md](docs/specs/README.md)** - Specifications overview
 
 ## Key Documents
 
+### Product Specifications
+- **[Specifications Overview](docs/specs/README.md)** - Navigation guide for all specs
+- **[Complete Specification](docs/specs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md)** - Full requirements and design
+- **[Streamlined Specification](docs/specs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md)** - Quick reference version
+
 ### Implementation Planning
-- **[Implementation Plan](docs/implementation/IMPLEMENTATION_PLAN.md)** - Comprehensive plan covering all development phases
-- **[Requirements Map](docs/implementation/REQUIREMENTS_MAP.md)** - Detailed mapping of requirements to implementation
-- **[Requirements Matrix](docs/implementation/REQUIREMENTS_MATRIX.csv)** - Structured requirements matrix
+- **[Implementation Plan](docs/implementation/IMPLEMENTATION_PLAN.md)** - Comprehensive roadmap with 9 epics
+- **[Requirements Map](docs/implementation/REQUIREMENTS_MAP.md)** - Detailed spec-to-code mapping
+- **[Requirements Matrix](docs/implementation/REQUIREMENTS_MATRIX.csv)** - Requirement traceability
+- **[Implementation Overview](docs/implementation/README.md)** - Guide to implementation docs
 
-### Testing and Quality
-- **[TESTING_INTEGRATION_GUIDE.md](TESTING_INTEGRATION_GUIDE.md)** - Testing integration guide
-- **[TESTING_DOCUMENTATION_INDEX.md](TESTING_DOCUMENTATION_INDEX.md)** - Testing documentation index
-- **[TESTING_RESEARCH_SUMMARY.md](TESTING_RESEARCH_SUMMARY.md)** - Testing research summary
+### Features & Integration
+- **[Feature Implementation Guides](docs/implementation/features/README.md)** - Email tracking, silence detection, etc.
+- **[Third-Party Integrations](docs/implementation/integrations/README.md)** - Unleash, Salesforce, etc.
 
-### Analysis and Research
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - Implementation summary
-- **[INDEX_REQUIREMENTS_ANALYSIS.md](INDEX_REQUIREMENTS_ANALYSIS.md)** - Requirements analysis index
-- **[RESEARCH_INDEX.md](RESEARCH_INDEX.md)** - Research materials index
+### Security & Observability
+- **[Security & Risk Analysis](docs/security/README.md)** - Risk assessment and mitigations
+- **[Production Readiness](docs/security/PRODUCTION_READINESS.md)** - Deployment checklist
+- **[Observability Strategy](docs/implementation/observability/README.md)** - Monitoring and tracing
+
+### Analytics & Research
+- **[Analytics Pipeline](docs/implementation/analytics/README.md)** - Data flow and deployment
+- **[Research Documentation](docs/research/README.md)** - Technical deep dives
+- **[Quick References](docs/research/quick-references/README.md)** - Condensed guides
 
 ## Getting Help
 
@@ -100,12 +153,17 @@ To get started with development:
 - Review [my-app/AGENTS.md](my-app/AGENTS.md) for development best practices
 
 **...understand the product requirements**
-- Start with [docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md](docs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md)
+- Start with [docs/specs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md](docs/specs/PANDADOC_VOICE_AGENT_SPEC_COMPLETE.md)
 - Review [docs/implementation/REQUIREMENTS_MAP.md](docs/implementation/REQUIREMENTS_MAP.md) for detailed mapping
 
 **...implement a specific feature**
-- Check [docs/implementation/IMPLEMENTATION_PLAN.md](docs/implementation/IMPLEMENTATION_PLAN.md) for the plan
-- Review [docs/implementation/REQUIREMENTS_MAP.md](docs/implementation/REQUIREMENTS_MAP.md) for requirements details
+- Check [docs/implementation/features/](docs/implementation/features/) for feature-specific guides
+- Review [docs/implementation/IMPLEMENTATION_PLAN.md](docs/implementation/IMPLEMENTATION_PLAN.md) for the overall roadmap
+- Use [docs/implementation/REQUIREMENTS_MAP.md](docs/implementation/REQUIREMENTS_MAP.md) for spec-to-code mapping
+
+**...set up integrations with third-party services**
+- Review [docs/implementation/integrations/README.md](docs/implementation/integrations/README.md) for available integrations
+- Check integration-specific guides in [docs/implementation/integrations/](docs/implementation/integrations/)
 
 **...learn about LiveKit Agents**
 - Read [my-app/AGENTS.md](my-app/AGENTS.md) for project-specific guidance
@@ -114,12 +172,19 @@ To get started with development:
 
 **...write tests**
 - See [my-app/AGENTS.md](my-app/AGENTS.md) for testing best practices
-- Review [TESTING_INTEGRATION_GUIDE.md](TESTING_INTEGRATION_GUIDE.md) for integration testing
 - Check existing tests in [my-app/tests/](my-app/tests/)
+- Review [docs/research/quick-references/testing-quick-ref.md](docs/research/quick-references/testing-quick-ref.md)
+
+**...understand security & risks**
+- Review [docs/security/README.md](docs/security/README.md) for risk overview
+- Check [docs/security/PRODUCTION_READINESS.md](docs/security/PRODUCTION_READINESS.md) before deployment
+- Read [docs/security/AGENT_RISK_MITIGATION_TASKS.md](docs/security/AGENT_RISK_MITIGATION_TASKS.md) for mitigation tasks
 
 **...understand the architecture**
 - Review [docs/implementation/ANALYSIS.md](docs/implementation/ANALYSIS.md)
 - Check [docs/implementation/IMPLEMENTATION_PLAN.md](docs/implementation/IMPLEMENTATION_PLAN.md)
+- Read [docs/implementation/observability/OBSERVABILITY_STRATEGY.md](docs/implementation/observability/OBSERVABILITY_STRATEGY.md)
+- Review [docs/implementation/analytics/](docs/implementation/analytics/) for data pipeline
 - Read the technical research in [docs/research/](docs/research/)
 
 **...work with AI coding assistants**
