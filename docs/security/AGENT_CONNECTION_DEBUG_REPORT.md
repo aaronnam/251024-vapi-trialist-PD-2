@@ -1,7 +1,7 @@
 # Agent Connection Failure - Root Cause Analysis & Fix
 
-**Status**: ✅ **ELEVEN_API_KEY Issue RESOLVED** → ⚠️ **New Issue Found**
-**Last Updated**: 2025-10-29 18:52 UTC
+**Status**: ✅ **ELEVEN_API_KEY Issue RESOLVED** → ✅ **Async Event Handler FIXED**
+**Last Updated**: 2025-10-29 19:03 UTC
 
 ## Issue Summary
 
@@ -22,9 +22,9 @@ ValueError: ElevenLabs API key is required, either as argument or set ELEVEN_API
 
 ---
 
-## Root Cause #2: Async Event Handler Error ⚠️ NEW BLOCKER
+## Root Cause #2: Async Event Handler Error ✅ FIXED
 
-After resolving the API key issue, a **new error prevents the agent from completing initialization**:
+After resolving the API key issue, a **previous error was preventing the agent from completing initialization**:
 
 Error from agent logs (2025-10-29 18:50:51):
 ```
@@ -32,13 +32,13 @@ ValueError: Cannot register an async callback with `.on()`.
 Use `asyncio.create_task` within your synchronous callback instead.
 ```
 
-**Location**: `agent.py` line 1289 - Event handler registration
+**Location**: `agent.py` line 1289 - Event handler registration (NOW FIXED)
 
-```python
-@session.on("user_state_changed")  # ← Line 1289
-```
-
-The agent process starts successfully but crashes when trying to register the `user_state_changed` event handler. This prevents the agent from joining the room.
+**RESOLUTION**: Fixed on 2025-10-29 19:03 UTC by restructuring the event handler:
+- Removed `async` from the `@session.on()` callback
+- Created a separate async function `handle_user_state_changed()` for the async logic
+- The callback now uses `asyncio.create_task()` to schedule the async work
+- Agent redeployed with version v20251029185847 - running successfully
 
 ## Evidence
 
@@ -51,13 +51,13 @@ A room is created (`pandadoc_trial_1761761577101_u9xjyh`), but the agent never j
 
 ---
 
-## Solution for Root Cause #2: Async Event Handler
+## Solution for Root Cause #2: Async Event Handler ✅ IMPLEMENTED
 
-The LiveKit Agents framework changed how event handlers work. The `.on()` method now only accepts **synchronous** callbacks, not async ones.
+The LiveKit Agents framework requires synchronous callbacks for `.on()` event handlers. Async functions cannot be directly registered.
 
-### **Fix: Wrap async logic in a sync callback**
+### **Fix Applied: Wrapped async logic in synchronous callback**
 
-**Change at `agent.py` line ~1289:**
+**Changed at `agent.py` lines 1289-1320:**
 
 **OLD (Broken):**
 ```python
@@ -67,23 +67,27 @@ async def on_user_state_changed(state: dict):
     await some_async_function()
 ```
 
-**NEW (Fixed):**
+**NEW (Fixed - DEPLOYED):**
 ```python
-@session.on("user_state_changed")
-def on_user_state_changed(state: dict):
-    asyncio.create_task(handle_user_state_changed(state))
-
 async def handle_user_state_changed(state: dict):
     # async code here
     await some_async_function()
+
+@session.on("user_state_changed")
+def on_user_state_changed(state: dict):
+    asyncio.create_task(handle_user_state_changed(state))
 ```
 
-**Key changes:**
-1. Make the `.on()` callback **synchronous** (remove `async`)
-2. Use `asyncio.create_task()` to schedule the async work
-3. Move async logic to a separate async function
+**Key changes implemented:**
+1. ✅ Made the `.on()` callback **synchronous** (removed `async`)
+2. ✅ Used `asyncio.create_task()` to schedule the async work
+3. ✅ Moved async logic to separate async function
+4. ✅ Verified no other async event handlers exist in code
 
-This pattern applies to **all event handlers** using `.on()`. Check for similar patterns throughout the agent code.
+**Deployment Status:**
+- ✅ Code fixed and deployed to LiveKit Cloud (version v20251029185847)
+- ✅ Agent running successfully
+- ✅ No more async handler errors in logs
 
 ---
 
@@ -176,9 +180,9 @@ After fixing the async event handler issue:
 
 ## Priority Actions
 
-1. **Immediate**: Fix the async event handler error at line 1289 (blocks agent from joining)
-2. **Already Done**: ELEVEN_API_KEY secret is set and working ✅
-3. **Optional**: Consider switching to OpenAI TTS to simplify dependencies
+1. **✅ COMPLETED**: Fixed async event handler error at lines 1289-1320 (agent now joins successfully)
+2. **✅ ALREADY DONE**: ELEVEN_API_KEY secret is set and working ✅
+3. **OPTIONAL**: Consider switching to OpenAI TTS to simplify dependencies
 
 ---
 
