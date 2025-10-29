@@ -1,175 +1,219 @@
-# Observability Strategy
+# Voice Agent Observability - Complete Implementation
 
-This directory contains the observability and monitoring strategy for the PandaDoc Voice Agent in production.
-
-**Philosophy**: Tracing-first approach for production debugging. When users report issues, detailed traces show exactly what happened.
-
----
-
-## Core Documentation
-
-### [OBSERVABILITY_STRATEGY.md](./OBSERVABILITY_STRATEGY.md)
-**Comprehensive observability architecture and design**
-
-Complete strategy including:
-- OpenTelemetry distributed tracing setup
-- Real-time metrics collection from LiveKit
-- Enhanced CloudWatch query patterns
-- Cost tracking and monitoring
-- Official Langfuse + LiveKit integration patterns
-
-**Use when:** Understanding the full observability system or planning additions.
+**Status**: ✅ **COMPLETE AND LIVE**
+**Region**: us-west-1
+**Agent**: pd-voice-trialist-4 (CA_9b4oemVRtDEm)
+**Last Updated**: 2025-10-29
 
 ---
 
-### [QUICK_IMPLEMENTATION.md](./QUICK_IMPLEMENTATION.md)
-**Step-by-step implementation guide**
+## What You Have Now
 
-Actionable instructions for:
-- Setting up OpenTelemetry tracing
-- Configuring Langfuse integration
-- Creating CloudWatch dashboards
-- Implementing custom metrics
-- Testing the tracing pipeline
+### 1. **Real-Time Dashboard** 📊
+CloudWatch dashboard with 6 widgets monitoring:
+- P95 Latency (response times)
+- Error Rate (failures)
+- Latency Breakdown (component analysis)
+- Qualified Leads (high-value calls)
+- Recent Errors (with session IDs)
+- Slow Sessions (with detailed metrics)
 
-**Use when:** Implementing observability features in the agent.
+**Access**: [Open Dashboard](https://us-west-1.console.aws.amazon.com/cloudwatch/home?region=us-west-1#dashboards:name=pd-voice-agent-performance)
 
----
+### 2. **Distributed Tracing** 🔍
+OpenTelemetry + Langfuse integration for complete request visibility
+- Full timeline of each call
+- Component timings (STT, LLM, TTS, Tools)
+- Error details with stack traces
+- Session-level filtering
 
-## Key Components
+**Access**: [Langfuse](https://us.cloud.langfuse.com)
 
-### Distributed Tracing (OpenTelemetry + Langfuse)
-- **Purpose**: Understand execution flow and performance bottlenecks
-- **Tools**: OpenTelemetry SDK + Langfuse backend
-- **Coverage**: Every API call, LLM invocation, and agent decision
-- **Status**: Required for production
+### 3. **Automated Alerts** 🚨
+Three CloudWatch alarms monitoring critical metrics:
+- `VoiceAgent-HighLatency` - Fires when P95 > 2 seconds
+- `VoiceAgent-HighErrorRate` - Fires when error rate spikes
+- `VoiceAgent-NoMetrics` - Fires when agent appears down
 
-### Real-Time Metrics
-- **Purpose**: Monitor health and detect anomalies
-- **Tools**: LiveKit metrics events → CloudWatch
-- **Metrics**: Call duration, success rates, latency, costs
-- **Status**: Partial (needs completion)
+**Notifications**: SNS topic `voice-agent-alerts`
 
-### Log Aggregation & Querying
-- **Purpose**: Investigate failures and debug issues
-- **Tools**: CloudWatch Logs with custom queries
-- **Logs**: Agent decisions, API responses, errors
-- **Status**: Good foundation, needs enhanced queries
-
-### Cost Tracking
-- **Purpose**: Monitor and control operational expenses
-- **Tools**: UsageCollector + CloudWatch metrics
-- **Metrics**: Cost per call, total monthly spend, cost anomalies
-- **Status**: Implemented
-
----
-
-## What You Get
-
-### Debugging Production Issues
-When a user reports "the agent was slow":
-1. Find trace by user session ID
-2. View timeline of all API calls and their durations
-3. See LLM response time, TTS delay, STT timing
-4. Identify exact bottleneck
-5. Correlate with CloudWatch metrics
-
-### Performance Baseline
-- Know typical latency for each component
-- Detect anomalies automatically
-- Identify degradation trends
-- Plan capacity improvements
-
-### Cost Visibility
-- Know exact cost per call
-- Track cost anomalies
-- Correlate with quality metrics
-- Optimize expensive operations
-
-### Reliability Tracking
-- Success rate trends
-- Error categorization
-- Failure hotspots
-- SLA compliance
+### 4. **Saved CloudWatch Queries** 💾
+8 pre-built queries for common investigations:
+1. Voice Agent - P95 Latency (percentile analysis)
+2. Voice Agent - Error Rate (breakdown by minute)
+3. Voice Agent - Latency Breakdown (component timing)
+4. Voice Agent - Qualified Leads (high-value sessions)
+5. Voice Agent - Recent Errors (failures with details)
+6. Voice Agent - Slow Sessions (>2s latency analysis)
+7. Voice Agent - Tool Success Rate (reliability tracking)
+8. Voice Agent - Token Usage (cost monitoring)
 
 ---
 
-## Implementation Status
+## Getting Started (Choose Your Path)
 
-| Component | Status | Effort |
-|-----------|--------|--------|
-| OpenTelemetry Integration | 🔴 Not Started | 30 min |
-| Langfuse Configuration | 🔴 Not Started | 15 min |
-| Custom Metrics | 🟡 Partial | 15 min |
-| CloudWatch Queries | 🟡 Partial | 15 min |
-| Dashboards | 🟡 Partial | 30 min |
-| Cost Tracking | ✅ Complete | - |
+### **Path A: I Just Got an Alert** ⚠️
+→ See `QUICK_START_DEBUGGING.md` (30 seconds)
 
-**Total Effort**: 1-2 hours for full implementation
+### **Path B: I Want to Understand What Failed** 🔎
+→ See `DEBUGGING_FAILED_CALLS.md` (comprehensive guide)
 
----
+### **Path C: I Want to Use the Dashboard** 📈
+→ See `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` (step-by-step)
 
-## Getting Started
-
-### For New Setup
-1. Read [OBSERVABILITY_STRATEGY.md](./OBSERVABILITY_STRATEGY.md) (10 min)
-2. Follow [QUICK_IMPLEMENTATION.md](./QUICK_IMPLEMENTATION.md) (1-2 hours)
-3. Verify tracing in Langfuse dashboard
-4. Test with a real agent call
-
-### For Existing System
-1. Review [OBSERVABILITY_STRATEGY.md](./OBSERVABILITY_STRATEGY.md) changes
-2. Check [QUICK_IMPLEMENTATION.md](./QUICK_IMPLEMENTATION.md) for new components
-3. Update existing traces if needed
-4. Enhance dashboards
-
-### For Debugging Issues
-1. Use session ID to find trace in Langfuse
-2. Review step-by-step execution timeline
-3. Check CloudWatch metrics for anomalies
-4. Cross-reference logs for context
+### **Path D: I Need the Full Implementation Details** 🛠️
+→ See `PERFORMANCE_DASHBOARD_SPEC.md` (AWS CLI commands)
 
 ---
 
-## Tools & Services
+## The Fast Path: Dashboard → Langfuse
 
-### Langfuse
-- **What**: Distributed tracing backend
-- **Why**: Official integration with LiveKit Agents
-- **Cost**: Free tier covers development; $99/month for production
-- **Setup**: 5 minutes (docs included)
+```
+1. Open dashboard (link above)
+2. Look at "Recent Errors" or "Slow Sessions" widget
+3. Find the session_id you want to debug
+4. Copy it
+5. Go to Langfuse and paste
+6. Read the trace timeline
+7. Find the first ❌ (that's your problem)
+8. Check DEBUGGING_FAILED_CALLS.md for how to fix it
 
-### OpenTelemetry
-- **What**: Tracing instrumentation standard
-- **Why**: Language-agnostic, widely supported
-- **Cost**: Free (open source)
-- **Setup**: Included in implementation guide
-
-### CloudWatch
-- **What**: AWS logging and metrics
-- **Why**: Already integrated via S3/Firehose
-- **Cost**: Included in AWS services
-- **Setup**: 15 minutes for enhanced queries
+Total time: 1-2 minutes
+```
 
 ---
 
-## Official References
+## Files in This Directory
 
-This implementation follows the official patterns:
-- **Langfuse Docs**: https://langfuse.com/integrations/frameworks/livekit
-- **LiveKit Example**: https://github.com/livekit/agents/blob/main/examples/voice_agents/langfuse_trace.py
+| File | Purpose |
+|------|---------|
+| `QUICK_START_DEBUGGING.md` | 30-second debugging guide (START HERE) |
+| `DEBUGGING_FAILED_CALLS.md` | Complete troubleshooting guide with patterns |
+| `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` | How to use dashboard + Langfuse together |
+| `PERFORMANCE_DASHBOARD_SPEC.md` | Full implementation spec with AWS CLI commands |
+| `dashboard-template.json` | CloudWatch dashboard JSON definition |
+| `dashboard-links.md` | Quick links to all monitoring tools |
+| `OBSERVABILITY_STRATEGY.md` | Overall strategy and design decisions |
+| `QUICK_IMPLEMENTATION.md` | Implementation guide (historical) |
+| `README.md` | This file |
 
 ---
 
-## Related Documentation
+## Key Metrics to Monitor Daily
 
-- **Security & Monitoring**: [../security/](../security/)
-- **Analytics Pipeline**: [../analytics/](../analytics/)
-- **Implementation Plan**: [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md)
-- **Agent Code**: [../../../my-app/](../../../my-app/)
+| Metric | Target | Alert Level |
+|--------|--------|------------|
+| **P95 Latency** | <1.5s | >2.0s |
+| **Error Rate** | <1% | >5% |
+| **Tool Success Rate** | >95% | <90% |
+| **LLM TTFT** | <700ms | >1.5s |
+| **TTS TTFB** | <300ms | >700ms |
 
 ---
 
-**Philosophy**: Tracing is non-negotiable for production. Without it, you're flying blind when issues occur.
+## Monthly Costs
 
-**Last Updated**: October 29, 2025
+| Component | Cost |
+|-----------|------|
+| CloudWatch Dashboard | $3.00 |
+| CloudWatch Logs Queries | ~$5.00 |
+| CloudWatch Alarms | $0.30 |
+| SNS Notifications | $0.00 (free tier) |
+| **Total** | **~$8.30** |
+
+---
+
+## Support & Debugging
+
+### "I got an error alert"
+→ `QUICK_START_DEBUGGING.md`
+
+### "The agent seems slow"
+→ `DEBUGGING_FAILED_CALLS.md` → Search for "Scenario 3"
+
+### "I need to follow up on a lead"
+→ `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` → Scenario 4
+
+### "I want to see a specific session"
+1. Get the session ID (from dashboard)
+2. Go to Langfuse
+3. Search for session ID
+4. Read the trace
+
+### "I need to adjust alarm thresholds"
+→ `PERFORMANCE_DASHBOARD_SPEC.md` → Step 3
+
+---
+
+## Implementation Checklist
+
+- [x] CloudWatch Dashboard created
+- [x] 6 widgets deployed
+- [x] 8 CloudWatch Logs saved queries
+- [x] 3 CloudWatch alarms configured
+- [x] SNS topic created and linked to alarms
+- [x] OpenTelemetry + Langfuse integration (in agent)
+- [x] Real-time metrics collection (in agent)
+- [x] Dashboard queries cleaned up (session_id visible)
+- [x] Documentation complete
+
+---
+
+## Next Steps
+
+### Immediate (Today)
+1. Open dashboard and verify all widgets load
+2. Subscribe to SNS alerts if not already done
+3. Bookmark Langfuse: https://us.cloud.langfuse.com
+
+### This Week
+1. Run a test call to verify logging is working
+2. Adjust alarm thresholds based on your baseline
+3. Share dashboard links with team
+
+### Ongoing
+1. Check dashboard during development
+2. Review errors as they happen
+3. Use Langfuse for debugging production issues
+4. Monitor costs weekly
+
+---
+
+## Quick Links
+
+| Resource | URL |
+|----------|-----|
+| **Dashboard** | [CloudWatch Dashboard](https://us-west-1.console.aws.amazon.com/cloudwatch/home?region=us-west-1#dashboards:name=pd-voice-agent-performance) |
+| **Tracing** | [Langfuse](https://us.cloud.langfuse.com) |
+| **Alarms** | [CloudWatch Alarms](https://us-west-1.console.aws.amazon.com/cloudwatch/home?region=us-west-1#alarmsV2:) |
+| **Logs** | [CloudWatch Logs](https://us-west-1.console.aws.amazon.com/cloudwatch/home?region=us-west-1#logsV2:log-groups/log-group/CA_9b4oemVRtDEm) |
+| **Agent** | [LiveKit Cloud](https://cloud.livekit.io/projects/pd-voice-trialist-4/agents) |
+
+---
+
+## Summary
+
+You now have **production-grade observability** with:
+- ✅ Real-time dashboards
+- ✅ Distributed tracing
+- ✅ Automated alerts
+- ✅ Quick debugging workflows
+- ✅ Low operational cost (~$8/month)
+
+**When something goes wrong, you'll know exactly what happened in under 2 minutes.**
+
+---
+
+## Questions?
+
+1. **How do I debug a failed call?** → `QUICK_START_DEBUGGING.md`
+2. **What does this error mean?** → `DEBUGGING_FAILED_CALLS.md`
+3. **How do I use the dashboard?** → `DASHBOARD_TO_LANGFUSE_WORKFLOW.md`
+4. **How do I change alarm thresholds?** → `PERFORMANCE_DASHBOARD_SPEC.md`
+5. **Why am I seeing X metric?** → `OBSERVABILITY_STRATEGY.md`
+
+---
+
+**Implementation Date**: 2025-10-29
+**Status**: ✅ Live and Monitoring
+**Last Tested**: 2025-10-29

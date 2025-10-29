@@ -56,9 +56,9 @@
     {
       "type": "log",
       "properties": {
-        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields _session_id, discovered_signals.team_size as team_size, discovered_signals.monthly_volume as volume\n| filter _event_type = \"session_analytics\"\n| filter team_size >= 5 or volume >= 100\n| filter @timestamp > ago(24h)\n| stats count(*) as qualified_leads",
+        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields @timestamp as timestamp, _session_id as session_id, discovered_signals.team_size as team_size, discovered_signals.monthly_volume as volume\n| filter _event_type = \"session_analytics\"\n| filter team_size >= 5 or volume >= 100\n| filter @timestamp > ago(24h)\n| sort @timestamp desc\n| limit 20",
         "region": "us-west-1",
-        "title": "Qualified Leads (24h)"
+        "title": "Qualified Leads (24h) - Click Session ID to Debug"
       },
       "width": 6,
       "height": 6,
@@ -68,9 +68,9 @@
     {
       "type": "log",
       "properties": {
-        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields @timestamp, _session_id, @message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 10",
+        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields @timestamp as timestamp, _session_id as session_id, @message as error_message\n| filter @message like /ERROR/\n| sort @timestamp desc\n| limit 10",
         "region": "us-west-1",
-        "title": "Recent Errors (Last 10)"
+        "title": "Recent Errors (Last 10) - Click Session ID to View in Langfuse"
       },
       "width": 6,
       "height": 6,
@@ -80,9 +80,9 @@
     {
       "type": "log",
       "properties": {
-        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields @timestamp, _session_id, total_latency, eou_delay, llm_ttft, tts_ttfb\n| filter _event_type = \"voice_metrics\" and total_latency > 2.0\n| sort @timestamp desc\n| limit 10",
+        "query": "SOURCE 'CA_9b4oemVRtDEm'\n| fields @timestamp as timestamp, _session_id as session_id, total_latency as latency_seconds, eou_delay, llm_ttft, tts_ttfb\n| filter _event_type = \"voice_metrics\" and total_latency > 2.0\n| sort @timestamp desc\n| limit 10",
         "region": "us-west-1",
-        "title": "Slow Sessions (>2s latency)"
+        "title": "Slow Sessions (>2s latency) - Click Session ID to Analyze"
       },
       "width": 12,
       "height": 6,

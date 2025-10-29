@@ -1396,6 +1396,40 @@ async def entrypoint(ctx: JobContext):
             # Get final metrics summary from LiveKit's UsageCollector
             usage_summary = agent.usage_collector.get_summary()
 
+            # Extract transcript from session history
+            # LiveKit maintains complete conversation in session.history
+            transcript = []
+            transcript_text = ""
+            try:
+                if hasattr(session, 'history') and session.history:
+                    for msg in session.history:
+                        # ChatMessage objects have role and content items
+                        role = getattr(msg, 'role', 'unknown')
+
+                        # Extract text content from the message
+                        # content can be a list of content items (text, audio, image)
+                        content_text = ""
+                        if hasattr(msg, 'content'):
+                            content = msg.content
+                            # content is a list of content items
+                            if isinstance(content, list):
+                                for item in content:
+                                    # TextContent has text attribute
+                                    if hasattr(item, 'text'):
+                                        content_text += item.text
+
+                        # Only add messages with actual text content
+                        if content_text.strip():
+                            transcript.append({
+                                "role": role,
+                                "content": content_text,
+                            })
+                            # Build plain text transcript
+                            transcript_text += f"{role.upper()}: {content_text}\n"
+            except Exception as e:
+                # Don't fail export if transcript extraction has issues
+                logger.warning(f"Could not extract transcript from session.history: {e}")
+
             # Compile complete session data
             session_payload = {
                 # Session metadata
@@ -1419,6 +1453,9 @@ async def entrypoint(ctx: JobContext):
                 # Conversation notes
                 "conversation_notes": agent.conversation_notes,
                 "conversation_state": agent.conversation_state,
+                # Transcript data (extracted from session.history)
+                "transcript": transcript,
+                "transcript_text": transcript_text,
                 # Consent tracking (CRITICAL for legal compliance audit trail)
                 "consent_obtained": agent.consent_given,
                 "consent_timestamp": agent.consent_timestamp,
@@ -1433,6 +1470,7 @@ async def entrypoint(ctx: JobContext):
                 f"  - Total cost: ${agent.session_costs['total_estimated_cost']:.4f}"
             )
             logger.info(f"  - Tool calls: {len(session_payload['tool_calls'])}")
+            logger.info(f"  - Transcript messages: {len(session_payload['transcript'])}")
             logger.info(
                 f"  - Qualification: {agent.discovered_signals.get('qualification_tier', 'Unknown')}"
             )
