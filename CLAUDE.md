@@ -82,11 +82,124 @@ These guides inform the design decisions in the implementation.
 2. **Use TDD for agent behavior changes** - Write tests first, then implement (per AGENTS.md guidelines)
 3. **Run tests before committing** - `uv run pytest` from `/my-app/`
 4. **Maintain code quality** - Use `ruff format` and `ruff check`
+5. **Test locally before deploying** - Always run `uv run python src/agent.py console` to catch errors early
 
 ### Understanding Requirements
 - Reference `/docs/specs/PANDADOC_VOICE_AGENT_SPEC_STREAMLINED.md` for business requirements
 - This spec defines what the agent should do and why
 - It includes detailed user personas, qualification logic, and integration requirements
+
+## Debugging and Deployment Best Practices
+
+### CRITICAL: Always Test in Console Mode Before Deploying
+
+**Rule: Never deploy code without testing in console mode first.** Console mode reveals initialization errors that won't appear in production logs until after deployment.
+
+```bash
+# From my-app/ directory
+uv run python src/agent.py console
+```
+
+**Why this matters:**
+- Catches plugin API incompatibilities (e.g., ElevenLabs TTS configuration errors)
+- Validates all imports and dependencies load correctly
+- Shows initialization errors immediately instead of after deployment
+- Much faster than deploy → check logs → fix → redeploy cycle
+
+### Docker Cache Issues and Solutions
+
+**Problem:** LiveKit Cloud deployment uses Docker build caching. Sometimes code changes don't deploy even after git commits because Docker reuses cached layers.
+
+**Symptoms:**
+- Build logs show `#X CACHED` for the code copy step
+- Old errors persist after fixes
+- Latest git commits don't appear in deployed code
+
+**Solution:** Force cache invalidation by modifying `.dockerignore`:
+
+```bash
+# Add/update timestamp comment at end of .dockerignore
+echo "# Force rebuild $(date) - <reason for rebuild>" >> .dockerignore
+git add .dockerignore
+git commit -m "Bust Docker cache: <reason>"
+lk agent deploy
+```
+
+**Verification:**
+```bash
+# Check build logs to ensure code was actually copied (not cached)
+lk agent logs --log-type=build | grep "COPY . ."
+# Should see "DONE 0.Xs" not "CACHED"
+```
+
+### Plugin Version Compatibility
+
+**LiveKit plugins evolve rapidly.** API changes between versions can break existing code.
+
+**Example - ElevenLabs TTS API Changes:**
+- v0.7.14 API: `voice=elevenlabs.Voice(id="...", name="...", category="...")`
+- v1.2.15 API: `voice_id="..."` (simpler string parameter)
+
+**Best Practice:**
+1. Check installed version: `uv pip list | grep elevenlabs`
+2. Consult LiveKit docs via MCP server for current API
+3. Test configuration changes in console mode
+4. Pin versions in `pyproject.toml` when stable
+
+### Deployment Workflow Checklist
+
+When making changes to agent code:
+
+- [ ] 1. Make code changes
+- [ ] 2. Test in console mode: `uv run python src/agent.py console`
+- [ ] 3. Fix any initialization errors revealed in console
+- [ ] 4. Run tests: `uv run pytest`
+- [ ] 5. If tests pass, check if Docker cache needs busting (see above)
+- [ ] 6. Deploy: `lk agent deploy`
+- [ ] 7. Verify deployment: Check build logs for actual code copy (not CACHED)
+- [ ] 8. Restart agent: `lk agent restart` (required for secret changes, good practice always)
+- [ ] 9. Monitor logs: `lk agent logs` for any runtime errors
+- [ ] 10. Test via Agent Playground or console connection
+
+### Quick Debugging Commands
+
+```bash
+# Check agent status
+lk agent status
+
+# Stream recent logs (Ctrl+C to stop)
+lk agent logs
+
+# Check build logs for deployment issues
+lk agent logs --log-type=build
+
+# Test locally in console mode
+uv run python src/agent.py console
+
+# Check installed plugin versions
+uv pip list | grep livekit
+
+# Force restart after deployment
+lk agent restart
+```
+
+### Common Error Patterns
+
+**"TypeError: __init__() got an unexpected keyword argument"**
+- Cause: Plugin API changed between versions
+- Solution: Check plugin version, consult docs, test in console mode
+
+**"conn_options" or similar missing argument errors**
+- Cause: Plugin version bug or API incompatibility
+- Solution: Update to latest stable version, check release notes
+
+**Production logs show old errors after deployment**
+- Cause: Docker cache preventing code deployment
+- Solution: Bust cache via .dockerignore timestamp, verify in build logs
+
+**Agent stuck at "setting things up"**
+- Cause: Initialization error preventing agent startup
+- Solution: Run in console mode to see the actual error message
 
 ## Documentation Organization
 
