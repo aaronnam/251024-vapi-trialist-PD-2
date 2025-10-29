@@ -9,7 +9,7 @@ description = "Simple voice AI assistant built with LiveKit Agents for Python"
 requires-python = ">=3.9"
 
 dependencies = [
-    "livekit-agents[silero,turn-detector]~=1.2",
+    "livekit-agents[deepgram,openai,silero,turn-detector]~=1.2",
     "livekit-plugins-noise-cancellation~=0.2",
     "livekit-plugins-elevenlabs~=0.2",
     "python-dotenv",
@@ -19,6 +19,10 @@ dependencies = [
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.2.2",
     "dateparser>=1.2.2",
+    "langfuse>=3.7.0",
+    "opentelemetry-api>=1.38.0",
+    "opentelemetry-sdk>=1.38.0",
+    "opentelemetry-exporter-otlp>=1.38.0",
 ]
 
 [dependency-groups]
