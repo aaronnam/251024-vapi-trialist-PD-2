@@ -1156,7 +1156,7 @@ async def entrypoint(ctx: JobContext):
             temperature=0.7,
         ),
         tts=elevenlabs.TTS(
-            voice="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
+            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
             model="eleven_turbo_v2_5",
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
@@ -1193,50 +1193,76 @@ async def entrypoint(ctx: JobContext):
     max_session_cost = 5.0  # Maximum $5 per session
     silence_warning_given = False
 
+    # Buffer to collect metrics for latency calculation
+    # Key: speech_id, Value: dict with eou, llm, tts metrics
+    metrics_buffer = {}
+
     # Metrics collection using the agent's built-in UsageCollector
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         """Collect metrics, track costs, and monitor latency for observability."""
-        from livekit.agents.metrics import LLMMetrics, STTMetrics, TTSMetrics
+        from livekit.agents.metrics import EOUMetrics, LLMMetrics, STTMetrics, TTSMetrics
 
         # Standard metrics logging
         metrics.log_metrics(ev.metrics)
         agent.usage_collector.collect(ev.metrics)
 
-        # Build structured metric data for CloudWatch observability
-        metric_data = {
-            "_event_type": "voice_metrics",
-            "_timestamp": datetime.now().isoformat(),
-            "_session_id": ctx.room.name,
-        }
+        # Collect metrics by speech_id for latency calculation
+        speech_id = getattr(ev.metrics, "speech_id", None)
 
-        # Calculate total latency when all components are present
-        if ev.metrics.eou and ev.metrics.llm and ev.metrics.tts:
-            total_latency = (
-                ev.metrics.eou.end_of_utterance_delay
-                + (ev.metrics.llm.ttft or 0)
-                + (ev.metrics.tts.ttfb or 0)
-            )
-            metric_data["total_latency"] = total_latency
-            metric_data["eou_delay"] = ev.metrics.eou.end_of_utterance_delay
-            metric_data["llm_ttft"] = ev.metrics.llm.ttft
-            metric_data["tts_ttfb"] = ev.metrics.tts.ttfb
+        if speech_id:
+            # Initialize buffer for this speech_id if needed
+            if speech_id not in metrics_buffer:
+                metrics_buffer[speech_id] = {}
 
-            # Alert on high latency (>1.5s target from observability guide)
-            if total_latency > 1.5:
-                logger.warning(
-                    f"⚠️ High latency: {total_latency:.2f}s "
-                    f"(EOU: {ev.metrics.eou.end_of_utterance_delay:.2f}s, "
-                    f"LLM: {ev.metrics.llm.ttft:.2f}s, "
-                    f"TTS: {ev.metrics.tts.ttfb:.2f}s)"
+            # Store the metric by type
+            if isinstance(ev.metrics, EOUMetrics):
+                metrics_buffer[speech_id]["eou"] = ev.metrics
+            elif isinstance(ev.metrics, LLMMetrics):
+                metrics_buffer[speech_id]["llm"] = ev.metrics
+            elif isinstance(ev.metrics, TTSMetrics):
+                metrics_buffer[speech_id]["tts"] = ev.metrics
+
+            # Check if we have all three metrics for this turn
+            turn_metrics = metrics_buffer[speech_id]
+            if "eou" in turn_metrics and "llm" in turn_metrics and "tts" in turn_metrics:
+                # Calculate total conversation latency
+                total_latency = (
+                    turn_metrics["eou"].end_of_utterance_delay
+                    + (turn_metrics["llm"].ttft or 0)
+                    + (turn_metrics["tts"].ttfb or 0)
                 )
 
-        # Log to CloudWatch via analytics queue
-        try:
-            send_to_analytics_queue(metric_data)
-        except Exception as e:
-            logger.error(f"Failed to send metrics to analytics queue: {e}")
+                # Build structured metric data for CloudWatch observability
+                metric_data = {
+                    "_event_type": "voice_metrics",
+                    "_timestamp": datetime.now().isoformat(),
+                    "_session_id": ctx.room.name,
+                    "_speech_id": speech_id,
+                    "total_latency": total_latency,
+                    "eou_delay": turn_metrics["eou"].end_of_utterance_delay,
+                    "llm_ttft": turn_metrics["llm"].ttft,
+                    "tts_ttfb": turn_metrics["tts"].ttfb,
+                }
+
+                # Alert on high latency (>1.5s target from observability guide)
+                if total_latency > 1.5:
+                    logger.warning(
+                        f"⚠️ High latency: {total_latency:.2f}s "
+                        f"(EOU: {turn_metrics['eou'].end_of_utterance_delay:.2f}s, "
+                        f"LLM: {turn_metrics['llm'].ttft:.2f}s, "
+                        f"TTS: {turn_metrics['tts'].ttfb:.2f}s)"
+                    )
+
+                # Log to CloudWatch via analytics queue
+                try:
+                    send_to_analytics_queue(metric_data)
+                except Exception as e:
+                    logger.error(f"Failed to send metrics to analytics queue: {e}")
+
+                # Clean up this speech_id from buffer (keep buffer from growing unbounded)
+                del metrics_buffer[speech_id]
 
         # Real-time cost calculation from direct provider usage (Priority 4, Task 4.1)
         if isinstance(ev.metrics, LLMMetrics):

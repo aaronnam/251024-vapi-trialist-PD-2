@@ -12,10 +12,20 @@ For LiveKit Cloud deployments:
 - Query analytics data using CloudWatch Insights
 """
 
+import gzip
 import json
 import logging
 import os
+from datetime import datetime
 from typing import Any, Dict
+
+# S3 client (imported with graceful fallback)
+try:
+    import boto3
+    from botocore.exceptions import ClientError, BotoCoreError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 # Standard logger for debug messages
 logger = logging.getLogger("analytics_queue")
@@ -48,6 +58,70 @@ analytics_handler = logging.StreamHandler()
 analytics_handler.setFormatter(StructuredAnalyticsFormatter())
 analytics_logger.addHandler(analytics_handler)
 analytics_logger.setLevel(logging.INFO)
+
+
+# S3 client singleton (lazy initialization)
+_s3_client = None
+
+
+def get_s3_client():
+    """Get or create S3 client (singleton pattern)."""
+    global _s3_client
+    if not _s3_client and BOTO3_AVAILABLE:
+        try:
+            _s3_client = boto3.client('s3', region_name=os.getenv('AWS_REGION', 'us-west-1'))
+        except Exception as e:
+            logger.warning(f"Failed to create S3 client: {e}")
+    return _s3_client
+
+
+def upload_to_s3(bucket: str, data: Dict[str, Any]) -> None:
+    """Upload session data to S3 with compression and date partitioning.
+
+    Args:
+        bucket: S3 bucket name
+        data: Session data to upload
+    """
+    if not BOTO3_AVAILABLE:
+        logger.debug("boto3 not available, skipping S3 upload")
+        return
+
+    try:
+        s3 = get_s3_client()
+        if not s3:
+            logger.debug("S3 client not initialized, skipping upload")
+            return
+
+        # Get session info
+        session_id = data.get('session_id', 'unknown')
+        timestamp = datetime.now()
+
+        # Create partitioned S3 key (Hive-style for Athena compatibility)
+        key = f"sessions/year={timestamp.year}/month={timestamp.month:02d}/day={timestamp.day:02d}/{session_id}.json.gz"
+
+        # Compress JSON (saves ~80% storage cost)
+        json_bytes = json.dumps(data, indent=2).encode('utf-8')
+        compressed = gzip.compress(json_bytes)
+
+        # Upload to S3
+        s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=compressed,
+            ContentType='application/json',
+            ContentEncoding='gzip',
+            Metadata={
+                'session-id': session_id,
+                'uploaded-at': datetime.now().isoformat()
+            }
+        )
+
+        logger.info(f"✅ Analytics uploaded to S3: s3://{bucket}/{key}")
+
+    except (ClientError, BotoCoreError) as e:
+        logger.error(f"S3 upload failed (AWS error): {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"S3 upload failed: {e}", exc_info=True)
 
 
 async def send_to_analytics_queue(data: Dict[str, Any]) -> None:
@@ -98,6 +172,11 @@ async def send_to_analytics_queue(data: Dict[str, Any]) -> None:
             "Session analytics data",
             extra={"analytics_data": data}
         )
+
+        # Also upload to S3 if configured
+        bucket = os.getenv('ANALYTICS_S3_BUCKET')
+        if bucket:
+            upload_to_s3(bucket, data)
 
         # Also log summary for debugging (standard format)
         logger.info(f"Analytics data exported for session: {data.get('session_id')}")
