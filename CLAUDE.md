@@ -201,6 +201,12 @@ lk agent restart
 - Cause: Initialization error preventing agent startup
 - Solution: Run in console mode to see the actual error message
 
+**TTS audio cuts off after first sentence (ElevenLabs)**
+- Cause: `auto_mode=True` (default) uses `SentenceTokenizer` that stops after first sentence
+- Solution: Set `auto_mode=False` in ElevenLabs TTS configuration
+- **Critical Fix:** Always explicitly configure `auto_mode=False` for multi-sentence responses
+- Reference: See `my-app/AGENTS.md` for complete TTS configuration guidance
+
 ## Documentation Organization
 
 The `/docs/` directory is organized into five main areas:

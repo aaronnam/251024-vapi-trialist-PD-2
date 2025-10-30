@@ -41,6 +41,45 @@ gemini mcp add --transport http livekit-docs https://docs.livekit.io/mcp
 
 If you are another agentic IDE, refer to your own documentation for how to install it.
 
+## TTS Configuration: Critical ElevenLabs Issue
+
+### ⚠️ CRITICAL: ElevenLabs `auto_mode` Default Behavior
+
+**Problem:** ElevenLabs TTS audio cuts off after the first sentence, even though the full text is generated.
+
+**Root Cause:** The `auto_mode` parameter defaults to `True`, which uses `SentenceTokenizer()` that processes text **one sentence at a time**. This causes audio to stop after the first sentence boundary.
+
+**Solution:** Always explicitly set `auto_mode=False` for multi-sentence responses:
+
+```python
+tts=elevenlabs.TTS(
+    voice_id="21m00Tcm4TlvDq8ikWAM",
+    model="eleven_turbo_v2_5",
+    streaming_latency=3,  # Recommended for stability
+    auto_mode=False,  # CRITICAL: Prevents sentence-by-sentence cutoff
+),
+```
+
+**Why this matters:**
+- `auto_mode=True` (default) → Uses `SentenceTokenizer()` → One sentence at a time
+- `auto_mode=False` → Uses `WordTokenizer()` → Continuous streaming of full text
+
+**Additional recommendations:**
+- Use `livekit-plugins-elevenlabs~=1.2` (latest stable version)
+- Set `streaming_latency=3` or higher for better stability
+- Always test TTS in console mode before deploying: `uv run python src/agent.py console`
+
+**Debugging TTS issues:**
+```bash
+# Check for TTS-related errors in logs
+lk agent logs | grep -i "elevenlabs\|tts\|stream"
+
+# Look for warnings about auto_mode
+# "auto_mode is enabled, it expects full sentences or phrases"
+```
+
+**Reference:** This issue was discovered in October 2024 and documented in commit `6e26d8c`.
+
 ## Handoffs and tasks ("workflows")
 
 Voice AI agents are highly sensitive to excessive latency. For this reason, it's important to design complex agents in a structured manner that minimizes the amount of irrelevant context and unnecessary tools included in requests to the LLM. LiveKit Agents supports handoffs (one agent hands control to another) and tasks (tightly-scoped prompts to achieve a specific outcome) to support building reliable workflows. You should make use of these features, instead of writing long instruction prompts that cover multiple phases of a conversation.  Refer to the [documentation](https://docs.livekit.io/agents/build/workflows/) for more information.
