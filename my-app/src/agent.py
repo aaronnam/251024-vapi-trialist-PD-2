@@ -26,7 +26,7 @@ from livekit.agents import (
     function_tool,
     metrics,
 )
-from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
+from livekit.plugins import cartesia, deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
@@ -1158,11 +1158,10 @@ async def entrypoint(ctx: JobContext):
             model="gpt-4.1-mini",
             temperature=0.7,
         ),
-        tts=elevenlabs.TTS(
-            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
-            model="eleven_turbo_v2_5",
-            # Use defaults - let auto_mode handle sentence tokenization properly
-            # auto_mode=True is default, uses sentence boundaries for natural speech
+        # Temporarily use Cartesia to verify the rest of system works
+        tts=cartesia.TTS(
+            voice="95856005-0332-41b0-935f-352e296aa0df",  # Professional female voice
+            model="sonic-2-english",
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
