@@ -30,7 +30,7 @@ from livekit.agents import (
     metrics,
 )
 from livekit.agents import tokenize
-from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
+from livekit.plugins import cartesia, deepgram, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 logger = logging.getLogger("agent")
@@ -276,8 +276,8 @@ If you need their email for any reason, you already have it - don't ask for it a
             "openai_cost": 0.0,
             "deepgram_minutes": 0.0,
             "deepgram_cost": 0.0,
-            "elevenlabs_characters": 0,
-            "elevenlabs_cost": 0.0,
+            "cartesia_characters": 0,
+            "cartesia_cost": 0.0,
             "unleash_searches": 0,  # Keep existing Unleash tracking
             "total_estimated_cost": 0.0,
         }
@@ -293,14 +293,14 @@ If you need their email for any reason, you already have it - don't ask for it a
             "openai_gpt4_mini_input": 0.000150 / 1000,  # $0.150 per 1M input tokens
             "openai_gpt4_mini_output": 0.000600 / 1000,  # $0.600 per 1M output tokens
             "deepgram_nova2": 0.0043 / 60,  # $0.0043 per minute
-            "elevenlabs_turbo": 0.15 / 1000000,  # $150 per 1M characters
+            "cartesia_sonic": 0.06 / 1000000,  # $60 per 1M characters (Sonic 3)
         }
 
         # Circuit breakers for direct provider APIs (Priority 4, Task 4.2)
         self.circuit_breakers = {
             "openai": {"failures": 0, "last_failure": None, "state": "closed"},
             "deepgram": {"failures": 0, "last_failure": None, "state": "closed"},
-            "elevenlabs": {"failures": 0, "last_failure": None, "state": "closed"},
+            "cartesia": {"failures": 0, "last_failure": None, "state": "closed"},
             "unleash": {"failures": 0, "last_failure": None, "state": "closed"},
         }
 
@@ -1150,7 +1150,7 @@ async def entrypoint(ctx: JobContext):
     else:
         logger.warning("⚠️ Tracing DISABLED - Add LangFuse keys for production debugging!")
 
-    # Set up a voice AI pipeline using direct provider plugins (OpenAI, ElevenLabs, Deepgram)
+    # Set up a voice AI pipeline using direct provider plugins (OpenAI, Cartesia, Deepgram)
     # This bypasses LiveKit Inference and uses your own API keys
     session = AgentSession(
         # Note: Use "nova-2-phonecall" model for telephony applications for optimized call quality
@@ -1162,14 +1162,14 @@ async def entrypoint(ctx: JobContext):
             model="gpt-4.1-mini",
             temperature=0.7,
         ),
-        tts=elevenlabs.TTS(
-            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
-            model="eleven_turbo_v2_5",
-            # CRITICAL: auto_mode=False prevents sentence-by-sentence cutoff
-            # Without this, ElevenLabs will only speak the first sentence
-            auto_mode=False,
-            # Increase streaming latency to buffer more text before synthesis
-            streaming_latency=3,
+        tts=cartesia.TTS(
+            # Cartesia Sonic 3 - High-quality TTS with low latency
+            model="sonic-3",
+            voice="f786b574-daa5-4673-aa0c-cbe3e8534c02",  # Professional female voice
+            language="en",
+            # Optional: Adjust speed and volume if needed
+            # speed=1.0,  # 1.0 is normal speed
+            # volume=1.0,  # 1.0 is normal volume
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
@@ -1303,13 +1303,13 @@ async def entrypoint(ctx: JobContext):
             agent.session_costs["total_estimated_cost"] += stt_cost
 
         elif isinstance(ev.metrics, TTSMetrics):
-            # ElevenLabs TTS costs (eleven_turbo_v2_5, charged per character)
+            # Cartesia TTS costs (Sonic 3, charged per character)
             tts_cost = (
-                ev.metrics.characters_count * agent.provider_pricing["elevenlabs_turbo"]
+                ev.metrics.characters_count * agent.provider_pricing["cartesia_sonic"]
             )
 
-            agent.session_costs["elevenlabs_characters"] += ev.metrics.characters_count
-            agent.session_costs["elevenlabs_cost"] += tts_cost
+            agent.session_costs["cartesia_characters"] += ev.metrics.characters_count
+            agent.session_costs["cartesia_cost"] += tts_cost
             agent.session_costs["total_estimated_cost"] += tts_cost
 
         # Cost limit enforcement
@@ -1592,9 +1592,9 @@ async def entrypoint(ctx: JobContext):
         agent.session_data["user_email"] = ""
         agent.session_data["user_metadata"] = {}
 
-    # Initial greeting
+    # Initial greeting with consent request
     await session.say(
-        "Hi! I'm your AI Pandadoc Trial Success Specialist. How's your trial going? Any roadblocks I can help clear up?"
+        "Hi! I'm your AI Pandadoc Trial Success Specialist. Before we begin, I need to let you know that our conversation will be transcribed for quality improvement and training purposes. Are you comfortable with that?"
     )
 
 

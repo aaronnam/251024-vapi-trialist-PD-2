@@ -24,6 +24,7 @@ dependencies = [
     "opentelemetry-sdk>=1.38.0",
     "opentelemetry-exporter-otlp>=1.38.0",
     "boto3>=1.34.0",
+    "livekit-plugins-cartesia>=1.2.15",
 ]
 
 [dependency-groups]
