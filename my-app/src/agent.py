@@ -1139,7 +1139,10 @@ async def entrypoint(ctx: JobContext):
     if trace_provider:
         logger.info(f"✅ Tracing enabled for session {ctx.room.name}")
         # Register shutdown callback to flush traces
-        ctx.add_shutdown_callback(lambda: trace_provider.force_flush())
+        # Make this async to be compatible with async export_session_data callback
+        async def flush_traces():
+            return trace_provider.force_flush()
+        ctx.add_shutdown_callback(flush_traces)
     else:
         logger.warning("⚠️ Tracing DISABLED - Add LangFuse keys for production debugging!")
 
@@ -1402,7 +1405,10 @@ async def entrypoint(ctx: JobContext):
             transcript_text = ""
             try:
                 if hasattr(session, 'history') and session.history:
-                    for msg in session.history:
+                    # ChatContext is not directly iterable, we need to access messages through chat_ctx
+                    # In AgentSession v1.0, history is a ChatContext object with messages accessible via iteration
+                    chat_messages = list(session.history)  # Convert ChatContext to list of messages
+                    for msg in chat_messages:
                         # ChatMessage objects have role and content items
                         role = getattr(msg, 'role', 'unknown')
 
@@ -1446,8 +1452,12 @@ async def entrypoint(ctx: JobContext):
                 "discovered_signals": agent.discovered_signals,
                 # Tool usage tracking
                 "tool_calls": agent.session_data["tool_calls"],
-                # LiveKit performance metrics
-                "metrics_summary": usage_summary,
+                # LiveKit performance metrics - convert UsageSummary to dict for JSON serialization
+                "metrics_summary": {
+                    "total_metrics": usage_summary.total_metrics if hasattr(usage_summary, 'total_metrics') else 0,
+                    "metrics": usage_summary.metrics if hasattr(usage_summary, 'metrics') else {},
+                    # Add any other relevant UsageSummary attributes as needed
+                } if usage_summary else {},
                 # Cost tracking (Priority 4, Task 4.1)
                 "cost_summary": agent.session_costs,
                 # Conversation notes
