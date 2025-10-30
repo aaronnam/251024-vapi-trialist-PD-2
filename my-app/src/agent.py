@@ -53,28 +53,6 @@ except ImportError:
 
 
 class PandaDocTrialistAgent(Agent):
-    async def tts_node(
-        self, text: AsyncIterable[str], model_settings: ModelSettings
-    ) -> AsyncIterable[rtc.AudioFrame]:
-        """Custom TTS node that buffers full text before synthesis.
-
-        This prevents ElevenLabs from cutting off after the first sentence
-        by collecting all text chunks before synthesizing, rather than
-        processing sentence-by-sentence.
-        """
-        # Collect all text chunks into a single string
-        full_text = ""
-        async for chunk in text:
-            full_text += chunk
-
-        # Create a generator that yields the full text at once
-        async def full_text_generator():
-            yield full_text
-
-        # Use default TTS with the complete text
-        async for frame in Agent.default.tts_node(self, full_text_generator(), model_settings):
-            yield frame
-
     def __init__(self, user_email: Optional[str] = None) -> None:
         # Build instructions with optional email context
         base_instructions = """You are Sarah, a friendly and knowledgeable Trial Success Specialist voice AI agent at PandaDoc. - currently in beta.
@@ -1187,6 +1165,9 @@ async def entrypoint(ctx: JobContext):
         tts=elevenlabs.TTS(
             voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
             model="eleven_turbo_v2_5",
+            # CRITICAL: auto_mode=False prevents sentence-by-sentence cutoff
+            # Without this, ElevenLabs will only speak the first sentence
+            auto_mode=False,
             # Increase streaming latency to buffer more text before synthesis
             streaming_latency=3,
         ),
