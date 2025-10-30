@@ -19,6 +19,7 @@ from livekit.agents import (
     JobProcess,
     MetricsCollectedEvent,
     RoomInputOptions,
+    RoomOutputOptions,
     RunContext,
     ToolError,
     WorkerOptions,
@@ -1522,6 +1523,11 @@ async def entrypoint(ctx: JobContext):
         room_input_options=RoomInputOptions(
             # For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=noise_cancellation.BVC(),
+        ),
+        # Explicitly enable audio output to ensure TTS audio is published to the room
+        room_output_options=RoomOutputOptions(
+            audio_enabled=True,  # Ensure audio tracks are published
+            transcription_enabled=True,  # Enable text transcriptions
         ),
     )
 
