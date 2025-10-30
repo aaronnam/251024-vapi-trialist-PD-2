@@ -1163,8 +1163,7 @@ async def entrypoint(ctx: JobContext):
             model="eleven_turbo_v2_5",
             # Fix for streaming cutoff: optimize latency and increase chunk sizes
             streaming_latency=4,  # Increase from default 3 to allow more buffering
-            chunk_length_schedule=[120, 200, 260, 300],  # Larger chunks to prevent early cutoff
-            optimize_streaming_latency=3,  # Optimization level for streaming
+            chunk_length_schedule=[150, 250, 350, 500],  # Much larger chunks to prevent early cutoff
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
