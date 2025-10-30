@@ -97,7 +97,7 @@ async def test_no_search_for_greetings():
             for greeting in greetings:
                 result = await session.run(user_input=greeting)
                 # Should respond without tool calls
-                await result.expect.next_event().is_message(role="assistant")
+                result.expect.next_event().is_message(role="assistant")
 
             # Verify search was never called
             assert not search_called, "Search should not be called for greetings"
@@ -187,7 +187,7 @@ async def test_volume_qualification():
 
         # Should recognize as qualified (100+ docs/month)
         # Just check response exists - qualification is internal state
-        await result.expect.next_event().is_message(role="assistant")
+        result.expect.next_event().is_message(role="assistant")
 
 
 @pytest.mark.asyncio
@@ -206,7 +206,7 @@ async def test_integration_qualification():
 
         # Should recognize integration need as qualification signal
         # Just check response exists
-        await result.expect.next_event().is_message(role="assistant")
+        result.expect.next_event().is_message(role="assistant")
 
 
 # ======================================================================
@@ -452,7 +452,7 @@ async def test_circuit_breaker_behavior():
             for _ in range(3):
                 result = await session.run(user_input="How do I do X?")
                 # Just check we get a response
-                await result.expect.next_event()
+                result.expect.next_event()
 
             # Circuit should limit total attempts
             assert call_count <= 5  # Should stop after threshold
