@@ -8,7 +8,7 @@ async def test_tts():
     tts = elevenlabs.TTS(
         voice_id="21m00Tcm4TlvDq8ikWAM",
         model="eleven_turbo_v2_5",
-        word_tokenizer=tokenize.WordTokenizer(),
+        streaming_latency=4,
     )
 
     # Test multi-sentence text

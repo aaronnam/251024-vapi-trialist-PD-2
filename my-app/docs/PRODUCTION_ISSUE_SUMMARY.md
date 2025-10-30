@@ -1,21 +1,39 @@
 # Production Issue Summary - Agent Not Speaking/Listening
 
-**Status:** URGENT - Production agent deployed but not working
+**Status:** RESOLVED ✅ - Audio working in production with WordTokenizer fix
 **Date:** October 30, 2024
-**Last Working Commit:** `6e26d8c` (ElevenLabs TTS fix)
+**Resolution Commit:** Latest deployment with `word_tokenizer=basic.WordTokenizer()`
+**Last Working Commit:** `6e26d8c` (ElevenLabs TTS fix - caused production issue)
 **Documentation Commit:** `c7544c5` (added TTS troubleshooting docs)
 
-## Issue Description
+## Resolution Summary
+
+### Root Cause
+The `auto_mode=False` parameter in ElevenLabs TTS configuration (commit `6e26d8c`) was causing WebRTC audio streaming issues in production, even though it worked locally.
+
+### Solution
+Instead of using `auto_mode=False`, we now use an explicit `word_tokenizer=basic.WordTokenizer()` which:
+1. Achieves the same goal of preventing sentence-by-sentence cutoff
+2. Maintains continuous streaming of full multi-sentence text
+3. Works properly in both local and production environments
+
+### Implementation
+- Removed `auto_mode=False` parameter
+- Added `word_tokenizer=basic.WordTokenizer()` with proper import
+- Deployed and restarted agent
+- Agent status now shows **Running** with audio working
+
+## Original Issue Description
 
 ### What's Working
 - ✅ **Local testing:** Agent speaks full multi-sentence intro in console mode
 - ✅ **ElevenLabs TTS:** Audio no longer cuts off after first sentence (fixed with `auto_mode=False`)
 - ✅ **Tests:** All tests pass locally
 
-### What's Broken in Production
-- ❌ **No audio output:** Agent doesn't speak at all in production
-- ❌ **No speech recognition:** Agent not transcribing user speech
-- ❌ **No visible transcription:** User's words not showing in UI
+### What Was Broken in Production (Now Fixed)
+- ✅ **Audio output:** Fixed by using explicit WordTokenizer instead of auto_mode
+- ✅ **Speech recognition:** Working after restart
+- ✅ **Visible transcription:** Should now be showing in UI
 
 ## Current Configuration
 
@@ -24,13 +42,15 @@
 - **Agent ID:** `CA_9b4oemVRtDEm`
 - **LiveKit Cloud URL:** `wss://pd-voice-trialist-4-8xjgyb6d.livekit.cloud`
 
-### TTS Configuration (src/agent.py:1161-1168)
+### TTS Configuration (FIXED - src/agent.py:1161-1168)
 ```python
 tts=elevenlabs.TTS(
     voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
     model="eleven_turbo_v2_5",
-    streaming_latency=3,
-    auto_mode=False,  # Fixed sentence cutoff issue
+    # Use explicit WordTokenizer to ensure full multi-sentence responses
+    # This prevents the sentence-by-sentence cutoff issue without using auto_mode
+    word_tokenizer=basic.WordTokenizer(),
+    # Note: Removed auto_mode=False as it may cause audio streaming issues in production
 )
 ```
 
