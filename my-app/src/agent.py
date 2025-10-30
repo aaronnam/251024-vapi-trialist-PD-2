@@ -1163,9 +1163,8 @@ async def entrypoint(ctx: JobContext):
             voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
             model="eleven_turbo_v2_5",
             streaming_latency=3,  # Increase latency for better stability
-            auto_mode=False,  # CRITICAL: Disable to prevent sentence-by-sentence cutoff
-            # auto_mode=True (default) uses SentenceTokenizer that stops after first sentence
-            # auto_mode=False uses WordTokenizer for continuous streaming of full text
+            # Note: Removed auto_mode parameter as it's not supported in ElevenLabs plugin
+            # and was causing audio to fail in production
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
