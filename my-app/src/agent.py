@@ -1161,10 +1161,8 @@ async def entrypoint(ctx: JobContext):
         tts=elevenlabs.TTS(
             voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
             model="eleven_turbo_v2_5",
-            # Fix for streaming cutoff - use optimal parameters for multi-sentence
-            streaming_latency=5,  # Higher latency for complete buffering (3-5 is recommended)
-            chunk_length_schedule=[500],  # Single large chunk to force complete processing
-            enable_ssml_parsing=False,  # Disable SSML to prevent punctuation issues
+            # Use defaults - let auto_mode handle sentence tokenization properly
+            # auto_mode=True is default, uses sentence boundaries for natural speech
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
