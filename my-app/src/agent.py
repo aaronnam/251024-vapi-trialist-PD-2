@@ -27,6 +27,7 @@ from livekit.agents import (
     function_tool,
     metrics,
 )
+from livekit.agents.tokenize import basic
 from livekit.plugins import deepgram, elevenlabs, noise_cancellation, openai, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -1162,9 +1163,11 @@ async def entrypoint(ctx: JobContext):
         tts=elevenlabs.TTS(
             voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel voice
             model="eleven_turbo_v2_5",
-            streaming_latency=3,  # Increase latency for better stability
-            # Note: Removed auto_mode parameter as it's not supported in ElevenLabs plugin
-            # and was causing audio to fail in production
+            # Use explicit WordTokenizer to ensure full multi-sentence responses
+            # This prevents the sentence-by-sentence cutoff issue without using auto_mode
+            word_tokenizer=basic.WordTokenizer(),
+            # Note: Removed auto_mode=False as it may cause audio streaming issues in production
+            # The explicit WordTokenizer achieves the same goal of continuous streaming
         ),
         # VAD (Voice Activity Detection) and turn detection work together for natural conversation flow
         # See more at https://docs.livekit.io/agents/build/turns
