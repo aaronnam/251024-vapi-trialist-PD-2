@@ -24,9 +24,6 @@ import subprocess
 if os.getenv('SF_ORG_ALIAS'):
     AUTH_METHOD = 'CLI'
     # Use existing CLI authenticated org (no credentials needed!)
-elif os.getenv('SF_CONSUMER_KEY'):
-    AUTH_METHOD = 'JWT'
-    # JWT authentication (requires Connected App)
 elif os.getenv('SF_USERNAME') and os.getenv('SF_PASSWORD'):
     AUTH_METHOD = 'PASSWORD'
     # Username/password authentication
@@ -40,11 +37,7 @@ else:
     print("\nSet environment variables for one of these methods:")
     print("\nOption A (CLI - Easiest, uses existing sf org login):")
     print("  SF_ORG_ALIAS=PandaDoc-Sandbox")
-    print("\nOption B (JWT - requires Connected App):")
-    print("  SF_CONSUMER_KEY=<consumer_key>")
-    print("  SF_USERNAME=<your_email>")
-    print("  SF_ORG_ALIAS=pandadoc-full-sandbox")
-    print("\nOption C (Username/Password):")
+    print("\nOption B (Username/Password):")
     print("  SF_USERNAME=<username>")
     print("  SF_PASSWORD=<password>")
     print("  SF_TOKEN=<security_token>")
@@ -59,29 +52,6 @@ def get_salesforce_client():
         org_alias = os.getenv('SF_ORG_ALIAS')
         return org_alias
 
-    elif AUTH_METHOD == 'JWT':
-        # Authenticate via CLI using JWT
-        org_alias = os.getenv('SF_ORG_ALIAS', 'pandadoc-full-sandbox')
-        consumer_key = os.getenv('SF_CONSUMER_KEY')
-        username = os.getenv('SF_USERNAME')
-        jwt_key_file = os.getenv('SF_JWT_KEY_FILE', './salesforce-certs/server.key')
-
-        # Login via JWT
-        result = subprocess.run([
-            'sf', 'org', 'login', 'jwt',
-            '--client-id', consumer_key,
-            '--jwt-key-file', jwt_key_file,
-            '--username', username,
-            '--instance-url', 'https://test.salesforce.com',
-            '--alias', org_alias
-        ], capture_output=True, text=True)
-
-        if result.returncode != 0:
-            print(f"JWT auth failed: {result.stderr}")
-            sys.exit(1)
-
-        return org_alias
-
     elif AUTH_METHOD == 'PASSWORD':
         # Direct authentication with simple-salesforce
         return Salesforce(
@@ -94,7 +64,7 @@ def get_salesforce_client():
 
 def query_salesforce(query, sf_client):
     """Query Salesforce - handles both CLI and library methods."""
-    if AUTH_METHOD in ['CLI', 'JWT']:
+    if AUTH_METHOD == 'CLI':
         # Query via CLI
         result = subprocess.run([
             'sf', 'data', 'query',
@@ -114,9 +84,10 @@ def query_salesforce(query, sf_client):
 
 def create_salesforce_event(event_data, sf_client):
     """Create Event record in Salesforce."""
-    if AUTH_METHOD in ['CLI', 'JWT']:
-        # Create via CLI
-        fields = ' '.join([f"{k}='{v}'" for k, v in event_data.items()])
+    if AUTH_METHOD == 'CLI':
+        # Create via CLI with proper escaping
+        # Escape single quotes in values and wrap in double quotes for safety
+        fields = ' '.join([f"{k}=\"{str(v).replace('\"', '\\"')}\"" for k, v in event_data.items()])
         result = subprocess.run([
             'sf', 'data', 'create', 'record',
             '--sobject', 'Event',
