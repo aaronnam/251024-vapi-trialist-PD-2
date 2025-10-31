@@ -1556,13 +1556,24 @@ async def entrypoint(ctx: JobContext):
                             logger.info(f"🔍 Processing ChatMessage {i}: role={role}")
 
                             # Extract text content from the message
-                            # content is a list of content items (text, audio, image)
+                            # content is a list of content items (ChatContent, AudioContent, ImageContent)
                             content_text = ""
                             if hasattr(msg, 'content') and isinstance(msg.content, list):
-                                for content_item in msg.content:
-                                    # TextContent has text attribute
-                                    if hasattr(content_item, 'text'):
+                                logger.info(f"🔍 Message has {len(msg.content)} content items")
+                                for idx, content_item in enumerate(msg.content):
+                                    content_type = type(content_item).__name__
+                                    logger.info(f"🔍   Content item {idx}: type={content_type}")
+
+                                    # ChatContent is the new v1.0 type that has .text
+                                    if isinstance(content_item, livekit_llm.ChatContent):
                                         content_text += content_item.text
+                                        logger.info(f"🔍   ChatContent text: {content_item.text[:50]}...")
+                                    # Legacy: also check for text attribute directly
+                                    elif hasattr(content_item, 'text'):
+                                        content_text += content_item.text
+                                        logger.info(f"🔍   Text content: {content_item.text[:50]}...")
+                            else:
+                                logger.warning(f"⚠️ Message has no content list")
 
                             # Only add messages with actual text content
                             if content_text.strip():
@@ -1711,12 +1722,24 @@ async def entrypoint(ctx: JobContext):
             if user_email and trace_provider:
                 try:
                     from opentelemetry import trace as otel_trace
+
+                    # IMPORTANT: Update session-level user ID and metadata
+                    # This makes the user ID appear at the trace level in Langfuse
+                    from livekit.agents.telemetry import set_tracer_provider
+                    set_tracer_provider(trace_provider, metadata={
+                        "langfuse.session.id": ctx.room.name,
+                        "langfuse.user.id": user_email,
+                        "user.email": user_email,
+                        "participant.identity": participant.identity
+                    })
+
+                    # Also create a span to mark when user was identified
                     tracer = otel_trace.get_tracer(__name__)
-                    # Create a span to capture user identification
                     with tracer.start_as_current_span("participant_identified") as span:
                         span.set_attribute("langfuse.user.id", user_email)
                         span.set_attribute("user.email", user_email)
                         span.set_attribute("participant.identity", participant.identity)
+
                     logger.info(f"✅ Langfuse updated with user ID: {user_email} (participant: {participant.identity})")
                 except Exception as e:
                     logger.warning(f"Could not update Langfuse with user ID: {e}")

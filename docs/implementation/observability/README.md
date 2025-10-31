@@ -92,14 +92,22 @@ Total time: 1-2 minutes
 | `QUICK_START_DEBUGGING.md` | 30-second debugging guide when alerts fire |
 | `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` | How to use dashboard + Langfuse together |
 
-### User ID in Langfuse (NEW - Answer to Your Question)
+### Langfuse Search & Filtering (NEW - Comprehensive Guide)
 | File | Purpose |
 |------|---------|
-| `LANGFUSE_USER_ID_COMPLETE_SUMMARY.md` | **Start here** - Complete overview |
-| `LANGFUSE_USER_ID_GUIDE.md` | Complete technical explanation |
-| `USER_ID_IMPLEMENTATION_SUMMARY.md` | What changed and how to test |
-| `VERIFY_USER_ID.md` | 2-minute verification checklist |
-| `USER_ID_FAQ.md` | Answers to common questions |
+| `LANGFUSE_SEARCH_FILTERING_GUIDE.md` | ⭐ **Start here** - 800+ lines, complete reference |
+| `LANGFUSE_QUICK_REFERENCE.md` | Cheat sheet with copy-paste examples |
+| `LANGFUSE_DOCUMENTATION_INDEX.md` | Navigation guide and learning paths |
+| `LANGFUSE_RESEARCH_SUMMARY.md` | Research findings and recommendations |
+
+### User ID in Langfuse (Specialized Guides)
+| File | Purpose |
+|------|---------|
+| `LANGFUSE_USER_ID_COMPLETE_SUMMARY.md` | Complete overview of user ID tracking |
+| `LANGFUSE_USER_ID_GUIDE.md` | Technical details |
+| `USER_ID_IMPLEMENTATION_SUMMARY.md` | Implementation guide |
+| `VERIFY_USER_ID.md` | Verification checklist |
+| `USER_ID_FAQ.md` | Common questions |
 
 ### Implementation & Reference
 | File | Purpose |
