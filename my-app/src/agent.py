@@ -1188,6 +1188,77 @@ If you need their email for any reason, you already have it - don't ask for it a
     #     return "sunny with a temperature of 70 degrees."
 
 
+def format_conversation_history(chat_context) -> str:
+    """
+    Format ChatContext into a readable conversation log for Langfuse.
+
+    This function extracts messages from the LiveKit ChatContext and formats them
+    as a human-readable conversation transcript showing role and content.
+
+    Args:
+        chat_context: LiveKit ChatContext object containing conversation history
+
+    Returns:
+        Formatted string representation of the conversation, with each message
+        formatted as "role: content" pairs separated by double newlines.
+        Returns a descriptive error message if formatting fails.
+    """
+    try:
+        from livekit.agents import llm as livekit_llm
+
+        # ChatContext has an .items property with the list of messages
+        if not hasattr(chat_context, 'items'):
+            return "No conversation history available"
+
+        messages = []
+        for item in chat_context.items:
+            # Only process ChatMessage items
+            if not isinstance(item, livekit_llm.ChatMessage):
+                continue
+
+            role = item.role if hasattr(item, 'role') else "unknown"
+
+            # Extract text content from the message
+            # Content can be a string, list, or ChatContent object
+            content_text = ""
+            if hasattr(item, 'content'):
+                content = item.content
+
+                if isinstance(content, str):
+                    content_text = content
+                elif isinstance(content, list):
+                    # Content is a list of content items
+                    for content_item in content:
+                        if isinstance(content_item, str):
+                            content_text += content_item
+                        elif isinstance(content_item, livekit_llm.ChatContent):
+                            content_text += content_item.text if hasattr(content_item, 'text') else str(content_item)
+                        elif hasattr(content_item, 'text'):
+                            content_text += content_item.text
+                        else:
+                            content_text += str(content_item)
+                else:
+                    # Try to extract text attribute or convert to string
+                    if hasattr(content, 'text'):
+                        content_text = content.text
+                    else:
+                        content_text = str(content)
+
+            # Add message to list if it has content
+            if content_text.strip():
+                messages.append(f"{role}: {content_text.strip()}")
+
+        if not messages:
+            return "No messages in conversation history"
+
+        # Join messages with double newline for readability
+        return "\n\n".join(messages)
+
+    except Exception as e:
+        logger.error(f"Error formatting conversation history: {e}")
+        return f"Error formatting conversation history: {str(e)}"
+
+
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
@@ -1391,6 +1462,39 @@ async def entrypoint(ctx: JobContext):
                 speech_id=speech_id
             )
 
+            # Enrich LLM span with conversation context for Langfuse visibility
+            # Similar pattern to user_speaking span enrichment
+            try:
+                from opentelemetry import trace as otel_trace
+
+                # Format the conversation history for input
+                conversation_input = format_conversation_history(session.history)
+
+                # Try to enrich the current span (should be llm_node or related)
+                current_span = otel_trace.get_current_span()
+
+                if current_span and current_span.is_recording():
+                    # Set Langfuse-specific attributes
+                    current_span.set_attribute("langfuse.input", conversation_input)
+
+                    # Set additional context attributes
+                    message_count = len(session.history.items) if hasattr(session.history, 'items') else 0
+                    current_span.set_attribute("llm.messages.count", message_count)
+                    current_span.set_attribute("llm.prompt_tokens", ev.metrics.prompt_tokens)
+                    current_span.set_attribute("llm.completion_tokens", ev.metrics.completion_tokens)
+
+                    logger.debug(
+                        f"✅ Enriched LLM span with {message_count} messages "
+                        f"({ev.metrics.prompt_tokens} prompt tokens, "
+                        f"{ev.metrics.completion_tokens} completion tokens)"
+                    )
+                else:
+                    logger.warning("No active span found to enrich with LLM conversation context")
+
+            except Exception as e:
+                # Don't let span enrichment errors break the agent
+                logger.warning(f"Failed to enrich LLM span with conversation context: {e}")
+
         elif isinstance(ev.metrics, STTMetrics):
             # Deepgram STT costs (nova-2, charged per minute)
             stt_minutes = ev.metrics.audio_duration / 60.0
@@ -1485,28 +1589,51 @@ async def entrypoint(ctx: JobContext):
             if transcript:
                 logger.info(f"User said: {transcript} (final: {is_final})")
 
-                # Create a span to capture user input in Langfuse
-                from opentelemetry import trace as otel_trace
-                tracer = otel_trace.get_tracer(__name__)
-
-                with tracer.start_as_current_span("user_speech") as span:
-                    span.set_attribute("user.transcript", transcript)
-                    span.set_attribute("user.transcript.is_final", is_final)
-                    span.set_attribute("langfuse.input", transcript)
+                # IMPORTANT: Access the VoiceAssistant's internal user_speaking span
+                # This span is created by LiveKit when user starts speaking
+                # We need to enrich it with the transcript data
+                if hasattr(session, '_user_speaking_span') and session._user_speaking_span:
+                    # Enrich the existing user_speaking span with transcript
+                    user_span = session._user_speaking_span
+                    user_span.set_attribute("langfuse.input", transcript)
+                    user_span.set_attribute("user.transcript", transcript)
+                    user_span.set_attribute("user.transcript.is_final", is_final)
                     # Add language if available
                     if hasattr(ev, 'language') and ev.language:
-                        span.set_attribute("user.language", ev.language)
+                        user_span.set_attribute("user.language", ev.language)
+                    logger.debug(f"Enriched user_speaking span with transcript: {transcript[:50]}...")
+                else:
+                    # Fallback: Try to get current span or create a new one
+                    from opentelemetry import trace as otel_trace
+                    current_span = otel_trace.get_current_span()
 
-                    # Also track in session data for analytics
-                    if "user_transcripts" not in agent.session_data:
-                        agent.session_data["user_transcripts"] = []
+                    if current_span and current_span.is_recording():
+                        # Enrich the current active span
+                        current_span.set_attribute("langfuse.input", transcript)
+                        current_span.set_attribute("user.transcript", transcript)
+                        current_span.set_attribute("user.transcript.is_final", is_final)
+                        logger.debug(f"Enriched current span with transcript: {transcript[:50]}...")
+                    else:
+                        # Create a new span as last resort
+                        tracer = otel_trace.get_tracer(__name__)
+                        with tracer.start_as_current_span("user_transcript") as span:
+                            span.set_attribute("langfuse.input", transcript)
+                            span.set_attribute("user.transcript", transcript)
+                            span.set_attribute("user.transcript.is_final", is_final)
+                            if hasattr(ev, 'language') and ev.language:
+                                span.set_attribute("user.language", ev.language)
+                        logger.debug(f"Created new user_transcript span: {transcript[:50]}...")
 
-                    # Only add final transcripts to avoid duplicates
-                    if is_final:
-                        agent.session_data["user_transcripts"].append({
-                            "text": transcript,
-                            "timestamp": datetime.now().isoformat()
-                        })
+                # Track in session data for analytics
+                if "user_transcripts" not in agent.session_data:
+                    agent.session_data["user_transcripts"] = []
+
+                # Only add final transcripts to avoid duplicates
+                if is_final:
+                    agent.session_data["user_transcripts"].append({
+                        "text": transcript,
+                        "timestamp": datetime.now().isoformat()
+                    })
         except Exception as e:
             logger.warning(f"Failed to track user speech: {e}")
 
@@ -1516,10 +1643,19 @@ async def entrypoint(ctx: JobContext):
         """Capture conversation items and send to Langfuse."""
         try:
             item = ev.item
-            role = item.role
-            content = item.text_content if hasattr(item, 'text_content') else str(item.content)
+            role = item.role if hasattr(item, 'role') else str(item.__class__.__name__)
+            content = item.text_content if hasattr(item, 'text_content') else str(item.content) if hasattr(item, 'content') else str(item)
 
             logger.debug(f"Conversation item added - {role}: {content[:100]}...")
+
+            # For user role, also try to enrich the user_speaking span if it exists
+            if role == "user" and hasattr(session, '_user_speaking_span') and session._user_speaking_span:
+                # Ensure the user_speaking span has the transcript
+                user_span = session._user_speaking_span
+                if not any(attr[0] == "langfuse.input" for attr in getattr(user_span, '_attributes', [])):
+                    user_span.set_attribute("langfuse.input", content)
+                    user_span.set_attribute("conversation.content", content)
+                    logger.debug(f"Enriched user_speaking span from conversation_item: {content[:50]}...")
 
             # Create a span for conversation tracking
             from opentelemetry import trace as otel_trace
