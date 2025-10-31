@@ -42,6 +42,7 @@ load_dotenv(".env.local")
 try:
     from utils.analytics_queue import send_to_analytics_queue
     from utils.telemetry import setup_observability
+    from utils.cost_tracking import CostTracker
 except ImportError:
     # Fallback for different import contexts
     import os
@@ -50,6 +51,7 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     from utils.analytics_queue import send_to_analytics_queue
     from utils.telemetry import setup_observability
+    from utils.cost_tracking import CostTracker
 
 
 class PandaDocTrialistAgent(Agent):
@@ -367,6 +369,9 @@ If you need their email for any reason, you already have it - don't ask for it a
             "failure_threshold": 3,  # Open circuit after N failures
             "cooldown_seconds": 60,  # Reset after 1 minute
         }
+
+        # Initialize Langfuse cost tracker
+        self.langfuse_cost_tracker = CostTracker()
 
     def transition_state(
         self, from_state: str, to_state: str, context: dict | None = None
@@ -1288,6 +1293,10 @@ async def entrypoint(ctx: JobContext):
         metrics.log_metrics(ev.metrics)
         agent.usage_collector.collect(ev.metrics)
 
+        # Debug logging to see what metrics are being collected
+        metric_type = type(ev.metrics).__name__
+        logger.debug(f"Metrics collected: {metric_type}")
+
         # Collect metrics by speech_id for latency calculation
         speech_id = getattr(ev.metrics, "speech_id", None)
 
@@ -1313,6 +1322,19 @@ async def entrypoint(ctx: JobContext):
                     + (turn_metrics["llm"].ttft or 0)
                     + (turn_metrics["tts"].ttfb or 0)
                 )
+
+                # Track aggregated costs for the entire conversation turn
+                # Note: We'll get the actual usage metrics from the individual metric events
+                # This aggregation happens after we've already tracked individual costs
+                # so we just need to report the turn summary with latency
+                try:
+                    # Create a turn summary span in Langfuse with latency info
+                    agent.langfuse_cost_tracker.track_conversation_turn(
+                        speech_id=speech_id,
+                        total_latency=total_latency
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to track turn costs in Langfuse: {e}")
 
                 # Build structured metric data for CloudWatch observability
                 metric_data = {
@@ -1361,6 +1383,14 @@ async def entrypoint(ctx: JobContext):
             agent.session_costs["openai_cost"] += llm_cost
             agent.session_costs["total_estimated_cost"] += llm_cost
 
+            # Track cost with Langfuse
+            agent.langfuse_cost_tracker.track_llm_cost(
+                prompt_tokens=ev.metrics.prompt_tokens,
+                completion_tokens=ev.metrics.completion_tokens,
+                model="gpt-4.1-mini",
+                speech_id=speech_id
+            )
+
         elif isinstance(ev.metrics, STTMetrics):
             # Deepgram STT costs (nova-2, charged per minute)
             stt_minutes = ev.metrics.audio_duration / 60.0
@@ -1369,6 +1399,16 @@ async def entrypoint(ctx: JobContext):
             agent.session_costs["deepgram_minutes"] += stt_minutes
             agent.session_costs["deepgram_cost"] += stt_cost
             agent.session_costs["total_estimated_cost"] += stt_cost
+
+            # Track cost with Langfuse
+            # Note: STT metrics don't have speech_id per LiveKit docs
+            logger.info(f"Tracking STT cost: {stt_minutes:.2f} minutes = ${stt_cost:.6f}")
+            agent.langfuse_cost_tracker.track_stt_cost(
+                audio_duration_seconds=ev.metrics.audio_duration,
+                provider="deepgram",
+                model="nova-2",
+                speech_id=None  # STT metrics don't include speech_id
+            )
 
         elif isinstance(ev.metrics, TTSMetrics):
             # Cartesia TTS costs (Sonic 3, charged per character)
@@ -1379,6 +1419,15 @@ async def entrypoint(ctx: JobContext):
             agent.session_costs["cartesia_characters"] += ev.metrics.characters_count
             agent.session_costs["cartesia_cost"] += tts_cost
             agent.session_costs["total_estimated_cost"] += tts_cost
+
+            # Track cost with Langfuse
+            logger.info(f"Tracking TTS cost: {ev.metrics.characters_count} chars = ${tts_cost:.6f}")
+            agent.langfuse_cost_tracker.track_tts_cost(
+                character_count=ev.metrics.characters_count,
+                provider="cartesia",
+                model="sonic-3",
+                speech_id=speech_id
+            )
 
         # Cost limit enforcement
         if (
@@ -1481,37 +1530,63 @@ async def entrypoint(ctx: JobContext):
             transcript = []
             transcript_text = ""
             try:
+                from livekit.agents import llm as livekit_llm
+
                 if hasattr(session, 'history') and session.history:
                     # ChatContext is not directly iterable, we need to access messages through chat_ctx
                     # In AgentSession v1.0, history is a ChatContext object with messages accessible via iteration
-                    chat_messages = list(session.history)  # Convert ChatContext to list of messages
-                    for msg in chat_messages:
-                        # ChatMessage objects have role and content items
-                        role = getattr(msg, 'role', 'unknown')
+                    all_items = list(session.history)  # Convert ChatContext to list of items
+                    logger.info(f"🔍 Transcript extraction: {len(all_items)} items in session.history")
 
-                        # Extract text content from the message
-                        # content can be a list of content items (text, audio, image)
-                        content_text = ""
-                        if hasattr(msg, 'content'):
-                            content = msg.content
-                            # content is a list of content items
-                            if isinstance(content, list):
-                                for item in content:
+                    # Filter for ChatMessage items only (v1.0 API)
+                    chat_messages = [
+                        item for item in all_items
+                        if isinstance(item, livekit_llm.ChatMessage)
+                    ]
+                    logger.info(f"🔍 Found {len(chat_messages)} ChatMessage items (filtered from {len(all_items)} total)")
+
+                    # Log first few item types for debugging
+                    for i, item in enumerate(all_items[:5]):
+                        logger.info(f"🔍 Item {i}: type={type(item).__name__}, role={getattr(item, 'role', 'N/A')}")
+
+                    for i, msg in enumerate(chat_messages):
+                        try:
+                            # ChatMessage objects have role and content items
+                            role = msg.role
+                            logger.info(f"🔍 Processing ChatMessage {i}: role={role}")
+
+                            # Extract text content from the message
+                            # content is a list of content items (text, audio, image)
+                            content_text = ""
+                            if hasattr(msg, 'content') and isinstance(msg.content, list):
+                                for content_item in msg.content:
                                     # TextContent has text attribute
-                                    if hasattr(item, 'text'):
-                                        content_text += item.text
+                                    if hasattr(content_item, 'text'):
+                                        content_text += content_item.text
 
-                        # Only add messages with actual text content
-                        if content_text.strip():
-                            transcript.append({
-                                "role": role,
-                                "content": content_text,
-                            })
-                            # Build plain text transcript
-                            transcript_text += f"{role.upper()}: {content_text}\n"
+                            # Only add messages with actual text content
+                            if content_text.strip():
+                                transcript.append({
+                                    "role": role,
+                                    "content": content_text,
+                                })
+                                # Build plain text transcript
+                                transcript_text += f"{role.upper()}: {content_text}\n"
+                                logger.info(f"✅ Captured {role} message: {content_text[:50]}...")
+                            else:
+                                logger.warning(f"⚠️ ChatMessage {i} (role={role}) has no text content")
+
+                        except Exception as e:
+                            logger.error(f"Failed to process ChatMessage {i}: {e}")
+                            continue
+
+                    logger.info(f"✅ Transcript extraction complete: {len(transcript)} messages captured")
+                else:
+                    logger.warning("⚠️ session.history is None or doesn't exist")
+
             except Exception as e:
                 # Don't fail export if transcript extraction has issues
-                logger.warning(f"Could not extract transcript from session.history: {e}")
+                logger.error(f"❌ Transcript extraction failed: {e}", exc_info=True)
 
             # Compile complete session data
             session_payload = {
@@ -1569,6 +1644,9 @@ async def entrypoint(ctx: JobContext):
             # Phase 1: Logs the data (placeholder implementation)
             # Phase 2: Will send to actual queue (Google Pub/Sub or AWS SQS)
             await send_to_analytics_queue(session_payload)
+
+            # Report final session cost summary to Langfuse
+            agent.langfuse_cost_tracker.report_session_summary()
 
             logger.info(
                 f"Analytics data collection complete for session {ctx.room.name}"
