@@ -1446,6 +1446,11 @@ async def entrypoint(ctx: JobContext):
                     # Model name (should already be set by LiveKit, but ensure it's there)
                     current_span.set_attribute("langfuse.model", "gpt-4.1-mini")
 
+                    # OpenTelemetry standard attributes for Model Usage visibility
+                    current_span.set_attribute("gen_ai.request.model", "gpt-4.1-mini")
+                    current_span.set_attribute("gen_ai.usage.input_tokens", ev.metrics.prompt_tokens)
+                    current_span.set_attribute("gen_ai.usage.output_tokens", ev.metrics.completion_tokens)
+
                     # Performance metrics
                     current_span.set_attribute("llm.ttft", ev.metrics.ttft or 0)
                     current_span.set_attribute("llm.duration", ev.metrics.duration or 0)
@@ -1496,6 +1501,12 @@ async def entrypoint(ctx: JobContext):
                     # Model name for Langfuse matching
                     current_span.set_attribute("langfuse.model", "deepgram-nova-2")
 
+                    # OpenTelemetry standard attributes for Model Usage visibility
+                    current_span.set_attribute("gen_ai.request.model", "deepgram-nova-2")
+                    # Normalize seconds to pseudo-tokens (1 second = 100 tokens for consistency)
+                    current_span.set_attribute("gen_ai.usage.input_tokens", int(stt_seconds * 100))
+                    current_span.set_attribute("gen_ai.usage.output_tokens", 0)  # STT has no output tokens
+
                     # Performance metrics
                     current_span.set_attribute("stt.duration", ev.metrics.duration or 0)
                     current_span.set_attribute("stt.audio_duration", ev.metrics.audio_duration)
@@ -1528,6 +1539,11 @@ async def entrypoint(ctx: JobContext):
 
                     # Model name for Langfuse matching (match your custom model definition)
                     current_span.set_attribute("langfuse.model", "Cartesia-3")
+
+                    # OpenTelemetry standard attributes for Model Usage visibility
+                    current_span.set_attribute("gen_ai.request.model", "Cartesia-3")
+                    current_span.set_attribute("gen_ai.usage.input_tokens", ev.metrics.characters_count)
+                    current_span.set_attribute("gen_ai.usage.output_tokens", 0)  # TTS has no output tokens
 
                     # Performance metrics
                     current_span.set_attribute("tts.ttfb", ev.metrics.ttfb or 0)
