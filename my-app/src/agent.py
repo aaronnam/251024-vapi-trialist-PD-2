@@ -42,7 +42,6 @@ load_dotenv(".env.local")
 try:
     from utils.analytics_queue import send_to_analytics_queue
     from utils.telemetry import setup_observability
-    from utils.cost_tracking import CostTracker
 except ImportError:
     # Fallback for different import contexts
     import os
@@ -51,7 +50,6 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     from utils.analytics_queue import send_to_analytics_queue
     from utils.telemetry import setup_observability
-    from utils.cost_tracking import CostTracker
 
 
 class PandaDocTrialistAgent(Agent):
@@ -370,8 +368,8 @@ If you need their email for any reason, you already have it - don't ask for it a
             "cooldown_seconds": 60,  # Reset after 1 minute
         }
 
-        # Initialize Langfuse cost tracker
-        self.langfuse_cost_tracker = CostTracker()
+        # Cost tracking is now done via span enrichment in metrics handler
+        # No need for separate CostTracker instance
 
     def transition_state(
         self, from_state: str, to_state: str, context: dict | None = None
@@ -1357,26 +1355,25 @@ async def entrypoint(ctx: JobContext):
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
-        """Collect metrics, track costs, and monitor latency for observability."""
+        """Collect metrics, enrich spans with costs, and monitor latency for observability."""
         from livekit.agents.metrics import EOUMetrics, LLMMetrics, STTMetrics, TTSMetrics
+        from opentelemetry import trace as otel_trace
 
         # Standard metrics logging
         metrics.log_metrics(ev.metrics)
         agent.usage_collector.collect(ev.metrics)
 
-        # Debug logging to see what metrics are being collected
-        metric_type = type(ev.metrics).__name__
-        logger.debug(f"Metrics collected: {metric_type}")
+        # Get current span for enrichment (created by LiveKit)
+        current_span = otel_trace.get_current_span()
 
-        # Collect metrics by speech_id for latency calculation
+        # Get speech_id if available
         speech_id = getattr(ev.metrics, "speech_id", None)
 
+        # Buffer metrics for latency calculation
         if speech_id:
-            # Initialize buffer for this speech_id if needed
             if speech_id not in metrics_buffer:
                 metrics_buffer[speech_id] = {}
 
-            # Store the metric by type
             if isinstance(ev.metrics, EOUMetrics):
                 metrics_buffer[speech_id]["eou"] = ev.metrics
             elif isinstance(ev.metrics, LLMMetrics):
@@ -1384,30 +1381,16 @@ async def entrypoint(ctx: JobContext):
             elif isinstance(ev.metrics, TTSMetrics):
                 metrics_buffer[speech_id]["tts"] = ev.metrics
 
-            # Check if we have all three metrics for this turn
+            # Calculate total latency when we have all three
             turn_metrics = metrics_buffer[speech_id]
             if "eou" in turn_metrics and "llm" in turn_metrics and "tts" in turn_metrics:
-                # Calculate total conversation latency
                 total_latency = (
                     turn_metrics["eou"].end_of_utterance_delay
                     + (turn_metrics["llm"].ttft or 0)
                     + (turn_metrics["tts"].ttfb or 0)
                 )
 
-                # Track aggregated costs for the entire conversation turn
-                # Note: We'll get the actual usage metrics from the individual metric events
-                # This aggregation happens after we've already tracked individual costs
-                # so we just need to report the turn summary with latency
-                try:
-                    # Create a turn summary span in Langfuse with latency info
-                    agent.langfuse_cost_tracker.track_conversation_turn(
-                        speech_id=speech_id,
-                        total_latency=total_latency
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to track turn costs in Langfuse: {e}")
-
-                # Build structured metric data for CloudWatch observability
+                # Send to CloudWatch
                 metric_data = {
                     "_event_type": "voice_metrics",
                     "_timestamp": datetime.now().isoformat(),
@@ -1419,7 +1402,6 @@ async def entrypoint(ctx: JobContext):
                     "tts_ttfb": turn_metrics["tts"].ttfb,
                 }
 
-                # Alert on high latency (>1.5s target from observability guide)
                 if total_latency > 1.5:
                     logger.warning(
                         f"⚠️ High latency: {total_latency:.2f}s "
@@ -1428,121 +1410,143 @@ async def entrypoint(ctx: JobContext):
                         f"TTS: {turn_metrics['tts'].ttfb:.2f}s)"
                     )
 
-                # Log to CloudWatch via analytics queue
                 try:
                     send_to_analytics_queue(metric_data)
                 except Exception as e:
                     logger.error(f"Failed to send metrics to analytics queue: {e}")
 
-                # Clean up this speech_id from buffer (keep buffer from growing unbounded)
                 del metrics_buffer[speech_id]
 
-        # Real-time cost calculation from direct provider usage (Priority 4, Task 4.1)
+        # ============================================================================
+        # ENRICH LIVEKIT'S SPANS WITH COST ATTRIBUTES (for Langfuse Model Usage)
+        # ============================================================================
+
         if isinstance(ev.metrics, LLMMetrics):
-            # OpenAI LLM costs (gpt-4.1-mini)
-            input_cost = (
-                ev.metrics.prompt_tokens
-                * agent.provider_pricing["openai_gpt4_mini_input"]
-            )
-            output_cost = (
-                ev.metrics.completion_tokens
-                * agent.provider_pricing["openai_gpt4_mini_output"]
-            )
+            # Calculate LLM costs
+            input_cost = ev.metrics.prompt_tokens * agent.provider_pricing["openai_gpt4_mini_input"]
+            output_cost = ev.metrics.completion_tokens * agent.provider_pricing["openai_gpt4_mini_output"]
             llm_cost = input_cost + output_cost
 
+            # Update session costs
             agent.session_costs["openai_tokens"] += ev.metrics.total_tokens
             agent.session_costs["openai_cost"] += llm_cost
             agent.session_costs["total_estimated_cost"] += llm_cost
 
-            # Track cost with Langfuse
-            agent.langfuse_cost_tracker.track_llm_cost(
-                prompt_tokens=ev.metrics.prompt_tokens,
-                completion_tokens=ev.metrics.completion_tokens,
-                model="gpt-4.1-mini",
-                speech_id=speech_id
-            )
+            # Enrich LiveKit's existing llm_request span
+            if current_span and current_span.is_recording():
+                try:
+                    # Cost attributes (Langfuse Model Usage uses these)
+                    current_span.set_attribute("langfuse.cost.total", llm_cost)
+                    current_span.set_attribute("langfuse.cost.input", input_cost)
+                    current_span.set_attribute("langfuse.cost.output", output_cost)
 
-            # Enrich LLM span with conversation context for Langfuse visibility
-            # Similar pattern to user_speaking span enrichment
-            try:
-                from opentelemetry import trace as otel_trace
+                    # OpenTelemetry standard attributes (best practice)
+                    current_span.set_attribute("gen_ai.usage.cost", llm_cost)
 
-                # Format the conversation history for input
-                conversation_input = format_conversation_history(session.history)
+                    # Model name (should already be set by LiveKit, but ensure it's there)
+                    current_span.set_attribute("langfuse.model", "gpt-4.1-mini")
 
-                # Try to enrich the current span (should be llm_node or related)
-                current_span = otel_trace.get_current_span()
-
-                if current_span and current_span.is_recording():
-                    # Set Langfuse-specific attributes
-                    current_span.set_attribute("langfuse.input", conversation_input)
-
-                    # Set additional context attributes
-                    message_count = len(session.history.items) if hasattr(session.history, 'items') else 0
-                    current_span.set_attribute("llm.messages.count", message_count)
-                    current_span.set_attribute("llm.prompt_tokens", ev.metrics.prompt_tokens)
-                    current_span.set_attribute("llm.completion_tokens", ev.metrics.completion_tokens)
+                    # Performance metrics
+                    current_span.set_attribute("llm.ttft", ev.metrics.ttft or 0)
+                    current_span.set_attribute("llm.duration", ev.metrics.duration or 0)
+                    current_span.set_attribute("llm.tokens_per_second", ev.metrics.tokens_per_second or 0)
+                    current_span.set_attribute("llm.prompt_cached_tokens", ev.metrics.prompt_cached_tokens or 0)
 
                     logger.debug(
-                        f"✅ Enriched LLM span with {message_count} messages "
-                        f"({ev.metrics.prompt_tokens} prompt tokens, "
-                        f"{ev.metrics.completion_tokens} completion tokens)"
+                        f"✅ Enriched LLM span with cost: ${llm_cost:.6f} "
+                        f"(prompt: {ev.metrics.prompt_tokens}, completion: {ev.metrics.completion_tokens})"
                     )
-                else:
-                    logger.warning("No active span found to enrich with LLM conversation context")
+                except Exception as e:
+                    logger.warning(f"Failed to enrich LLM span: {e}")
 
+            # Enrich with conversation context
+            try:
+                conversation_input = format_conversation_history(session.history)
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("langfuse.input", conversation_input)
+                    message_count = len(session.history.items) if hasattr(session.history, 'items') else 0
+                    current_span.set_attribute("llm.messages.count", message_count)
             except Exception as e:
-                # Don't let span enrichment errors break the agent
                 logger.warning(f"Failed to enrich LLM span with conversation context: {e}")
 
         elif isinstance(ev.metrics, STTMetrics):
-            # Deepgram STT costs (nova-2, charged per minute)
-            stt_minutes = ev.metrics.audio_duration / 60.0
-            stt_cost = stt_minutes * agent.provider_pricing["deepgram_nova2"]
+            # Calculate STT costs
+            # Note: LiveKit reports audio_duration in SECONDS
+            # Deepgram pricing is $0.0043 per minute = $0.00007167 per second
+            stt_seconds = ev.metrics.audio_duration  # Already in seconds
+            stt_cost = stt_seconds * (agent.provider_pricing["deepgram_nova2"] / 60.0)  # Convert $/min to $/sec
 
+            # Update session costs (keep minutes for session tracking)
+            stt_minutes = stt_seconds / 60.0
             agent.session_costs["deepgram_minutes"] += stt_minutes
             agent.session_costs["deepgram_cost"] += stt_cost
             agent.session_costs["total_estimated_cost"] += stt_cost
 
-            # Track cost with Langfuse
-            # Note: STT metrics don't have speech_id per LiveKit docs
-            logger.info(f"Tracking STT cost: {stt_minutes:.2f} minutes = ${stt_cost:.6f}")
-            agent.langfuse_cost_tracker.track_stt_cost(
-                audio_duration_seconds=ev.metrics.audio_duration,
-                provider="deepgram",
-                model="nova-2",
-                speech_id=None  # STT metrics don't include speech_id
-            )
+            # Enrich LiveKit's existing STT span
+            if current_span and current_span.is_recording():
+                try:
+                    # Cost attributes
+                    current_span.set_attribute("langfuse.cost.total", stt_cost)
+
+                    # Usage details - Langfuse needs "input" usage type IN SECONDS
+                    # Important: Use seconds, not minutes, to match Langfuse model definition
+                    current_span.set_attribute("langfuse.usage.input", stt_seconds)
+                    current_span.set_attribute("langfuse.usage.unit", "SECONDS")
+
+                    # Model name for Langfuse matching
+                    current_span.set_attribute("langfuse.model", "deepgram-nova-2")
+
+                    # Performance metrics
+                    current_span.set_attribute("stt.duration", ev.metrics.duration or 0)
+                    current_span.set_attribute("stt.audio_duration", ev.metrics.audio_duration)
+                    current_span.set_attribute("stt.streamed", ev.metrics.streamed)
+
+                    logger.debug(
+                        f"✅ Enriched STT span with cost: ${stt_cost:.6f} ({stt_seconds:.2f} seconds, {stt_minutes:.2f} minutes)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to enrich STT span: {e}")
 
         elif isinstance(ev.metrics, TTSMetrics):
-            # Cartesia TTS costs (Sonic 3, charged per character)
-            tts_cost = (
-                ev.metrics.characters_count * agent.provider_pricing["cartesia_sonic"]
-            )
+            # Calculate TTS costs
+            tts_cost = ev.metrics.characters_count * agent.provider_pricing["cartesia_sonic"]
 
+            # Update session costs
             agent.session_costs["cartesia_characters"] += ev.metrics.characters_count
             agent.session_costs["cartesia_cost"] += tts_cost
             agent.session_costs["total_estimated_cost"] += tts_cost
 
-            # Track cost with Langfuse
-            logger.info(f"Tracking TTS cost: {ev.metrics.characters_count} chars = ${tts_cost:.6f}")
-            agent.langfuse_cost_tracker.track_tts_cost(
-                character_count=ev.metrics.characters_count,
-                provider="cartesia",
-                model="sonic-3",
-                speech_id=speech_id
-            )
+            # Enrich LiveKit's existing tts_request span
+            if current_span and current_span.is_recording():
+                try:
+                    # Cost attributes
+                    current_span.set_attribute("langfuse.cost.total", tts_cost)
+
+                    # Usage details - Langfuse needs "input" usage type
+                    current_span.set_attribute("langfuse.usage.input", ev.metrics.characters_count)
+                    current_span.set_attribute("langfuse.usage.unit", "CHARACTERS")
+
+                    # Model name for Langfuse matching (match your custom model definition)
+                    current_span.set_attribute("langfuse.model", "Cartesia-3")
+
+                    # Performance metrics
+                    current_span.set_attribute("tts.ttfb", ev.metrics.ttfb or 0)
+                    current_span.set_attribute("tts.duration", ev.metrics.duration or 0)
+                    current_span.set_attribute("tts.audio_duration", ev.metrics.audio_duration or 0)
+                    current_span.set_attribute("tts.streamed", ev.metrics.streamed)
+
+                    logger.debug(
+                        f"✅ Enriched TTS span with cost: ${tts_cost:.6f} ({ev.metrics.characters_count} chars)"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to enrich TTS span: {e}")
 
         # Cost limit enforcement
-        if (
-            agent.session_costs["total_estimated_cost"]
-            > agent.cost_limits["session_max"]
-        ):
+        if agent.session_costs["total_estimated_cost"] > agent.cost_limits["session_max"]:
             logger.warning(
                 f"Session cost limit exceeded: ${agent.session_costs['total_estimated_cost']:.4f} "
                 f"(limit: ${agent.cost_limits['session_max']})"
             )
-            # TODO: Implement graceful session termination or warning to user
 
     # Handle user silence/inactivity to prevent dead air charges
     async def handle_user_state_changed(ev):
@@ -1864,8 +1868,8 @@ async def entrypoint(ctx: JobContext):
             # Phase 2: Will send to actual queue (Google Pub/Sub or AWS SQS)
             await send_to_analytics_queue(session_payload)
 
-            # Report final session cost summary to Langfuse
-            agent.langfuse_cost_tracker.report_session_summary()
+            # Note: Cost tracking is now done via span enrichment in real-time
+            # Session cost summary is available in session_payload['cost_summary']
 
             logger.info(
                 f"Analytics data collection complete for session {ctx.room.name}"
