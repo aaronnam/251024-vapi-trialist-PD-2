@@ -47,3 +47,4 @@ tests/
 eval/
 evals/# Force rebuild Wed Oct 29 14:42:30 PDT 2025 - Fix ElevenLabs TTS
 # Force rebuild Thu Oct 30 21:45:07 PDT 2025 - Add diagnostic logging to transcript extraction
+# Force rebuild Thu Oct 30 21:57:10 PDT 2025 - Fix ChatContext iteration error using .items property

@@ -1533,9 +1533,9 @@ async def entrypoint(ctx: JobContext):
                 from livekit.agents import llm as livekit_llm
 
                 if hasattr(session, 'history') and session.history:
-                    # ChatContext is not directly iterable, we need to access messages through chat_ctx
-                    # In AgentSession v1.0, history is a ChatContext object with messages accessible via iteration
-                    all_items = list(session.history)  # Convert ChatContext to list of items
+                    # ChatContext is not directly iterable, access items via .items property
+                    # In AgentSession v1.0, history is a ChatContext object with .items list
+                    all_items = session.history.items  # Get list of items from ChatContext
                     logger.info(f"🔍 Transcript extraction: {len(all_items)} items in session.history")
 
                     # Filter for ChatMessage items only (v1.0 API)
