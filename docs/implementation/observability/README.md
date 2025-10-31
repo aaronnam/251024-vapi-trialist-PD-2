@@ -103,6 +103,7 @@ Total time: 1-2 minutes
 | File | Purpose |
 |------|---------|
 | `OBSERVABILITY_ENGINEERING_REPORT.md` | ⭐ **COMPLETE ENGINEERING REFERENCE** - Architecture, debugging, troubleshooting |
+| `DATA_DICTIONARY.md` | ⭐ **EXHAUSTIVE FIELD REFERENCE** - All S3 and CloudWatch fields with examples |
 | `STRING_CONTENT_FIX.md` | ChatMessage content handling fix (Oct 31, 2025) |
 | `CHATCONTEXT_ITERATION_FIX.md` | ChatContext API fix (Oct 31, 2025) |
 | `S3_IAM_POLICY_FIX.md` | S3 permissions fix |
