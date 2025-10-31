@@ -1474,6 +1474,71 @@ async def entrypoint(ctx: JobContext):
         """Synchronous callback for user state changes."""
         asyncio.create_task(handle_user_state_changed(ev))
 
+    # IMPORTANT: Capture user speech transcriptions for Langfuse visibility
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(ev):
+        """Capture user speech transcriptions and send to Langfuse."""
+        try:
+            transcript = ev.transcript
+            is_final = ev.is_final
+
+            if transcript:
+                logger.info(f"User said: {transcript} (final: {is_final})")
+
+                # Create a span to capture user input in Langfuse
+                from opentelemetry import trace as otel_trace
+                tracer = otel_trace.get_tracer(__name__)
+
+                with tracer.start_as_current_span("user_speech") as span:
+                    span.set_attribute("user.transcript", transcript)
+                    span.set_attribute("user.transcript.is_final", is_final)
+                    span.set_attribute("langfuse.input", transcript)
+                    # Add language if available
+                    if hasattr(ev, 'language') and ev.language:
+                        span.set_attribute("user.language", ev.language)
+
+                    # Also track in session data for analytics
+                    if "user_transcripts" not in agent.session_data:
+                        agent.session_data["user_transcripts"] = []
+
+                    # Only add final transcripts to avoid duplicates
+                    if is_final:
+                        agent.session_data["user_transcripts"].append({
+                            "text": transcript,
+                            "timestamp": datetime.now().isoformat()
+                        })
+        except Exception as e:
+            logger.warning(f"Failed to track user speech: {e}")
+
+    # Also capture conversation items for complete history in Langfuse
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(ev):
+        """Capture conversation items and send to Langfuse."""
+        try:
+            item = ev.item
+            role = item.role
+            content = item.text_content if hasattr(item, 'text_content') else str(item.content)
+
+            logger.debug(f"Conversation item added - {role}: {content[:100]}...")
+
+            # Create a span for conversation tracking
+            from opentelemetry import trace as otel_trace
+            tracer = otel_trace.get_tracer(__name__)
+
+            with tracer.start_as_current_span("conversation_item") as span:
+                span.set_attribute("conversation.role", role)
+                span.set_attribute("conversation.content", content)
+                span.set_attribute("conversation.interrupted", item.interrupted if hasattr(item, 'interrupted') else False)
+
+                # Set input/output based on role for Langfuse visibility
+                if role == "user":
+                    span.set_attribute("langfuse.input", content)
+                elif role == "assistant":
+                    span.set_attribute("langfuse.output", content)
+
+        except Exception as e:
+            logger.warning(f"Failed to track conversation item: {e}")
+
     # Check session limits periodically
     async def check_session_limits():
         """Check time and cost limits every 30 seconds."""
@@ -1556,7 +1621,10 @@ async def entrypoint(ctx: JobContext):
                             logger.info(f"🔍 Processing ChatMessage {i}: role={role}")
 
                             # Extract text content from the message
-                            # content is a list of content items (ChatContent, AudioContent, ImageContent)
+                            # In LiveKit v1.0, content is a list that can contain:
+                            # - Plain strings (most common for text messages)
+                            # - ChatContent objects (with .text attribute)
+                            # - AudioContent, ImageContent objects
                             content_text = ""
                             if hasattr(msg, 'content') and isinstance(msg.content, list):
                                 logger.info(f"🔍 Message has {len(msg.content)} content items")
@@ -1564,8 +1632,12 @@ async def entrypoint(ctx: JobContext):
                                     content_type = type(content_item).__name__
                                     logger.info(f"🔍   Content item {idx}: type={content_type}")
 
+                                    # Handle plain strings (most common case in v1.0)
+                                    if isinstance(content_item, str):
+                                        content_text += content_item
+                                        logger.info(f"🔍   String content: {content_item[:50]}...")
                                     # ChatContent is the new v1.0 type that has .text
-                                    if isinstance(content_item, livekit_llm.ChatContent):
+                                    elif isinstance(content_item, livekit_llm.ChatContent):
                                         content_text += content_item.text
                                         logger.info(f"🔍   ChatContent text: {content_item.text[:50]}...")
                                     # Legacy: also check for text attribute directly
