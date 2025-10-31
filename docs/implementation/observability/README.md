@@ -3,7 +3,14 @@
 **Status**: ✅ **COMPLETE AND LIVE**
 **Region**: us-west-1
 **Agent**: pd-voice-trialist-4 (CA_9b4oemVRtDEm)
-**Last Updated**: 2025-10-29
+**Last Updated**: 2025-10-31
+
+## 🆕 NEW: Transcript Capture Fixed (Oct 31, 2025)
+✅ Transcript capture now working at 100% success rate
+✅ S3 analytics pipeline fully operational
+✅ Salesforce sync validated
+
+**Start here**: [`OBSERVABILITY_ENGINEERING_REPORT.md`](./OBSERVABILITY_ENGINEERING_REPORT.md) - Complete engineering reference
 
 ---
 
@@ -92,7 +99,17 @@ Total time: 1-2 minutes
 | `QUICK_START_DEBUGGING.md` | 30-second debugging guide when alerts fire |
 | `DASHBOARD_TO_LANGFUSE_WORKFLOW.md` | How to use dashboard + Langfuse together |
 
-### Langfuse Search & Filtering (NEW - Comprehensive Guide)
+### 🆕 Transcript Capture & Engineering Guides
+| File | Purpose |
+|------|---------|
+| `OBSERVABILITY_ENGINEERING_REPORT.md` | ⭐ **COMPLETE ENGINEERING REFERENCE** - Architecture, debugging, troubleshooting |
+| `STRING_CONTENT_FIX.md` | ChatMessage content handling fix (Oct 31, 2025) |
+| `CHATCONTEXT_ITERATION_FIX.md` | ChatContext API fix (Oct 31, 2025) |
+| `S3_IAM_POLICY_FIX.md` | S3 permissions fix |
+| `TRANSCRIPT_SUMMARY.md` | Executive summary of transcript capture |
+| `ALL_TRANSCRIPTS_OCT31.md` | Detailed analysis of all Oct 31 sessions |
+
+### Langfuse Search & Filtering (Comprehensive Guide)
 | File | Purpose |
 |------|---------|
 | `LANGFUSE_SEARCH_FILTERING_GUIDE.md` | ⭐ **Start here** - 800+ lines, complete reference |
