@@ -84,7 +84,22 @@ if not lead_result['records']:
 - Contact record: `{'Id': '003...', 'OwnerId': '005...'}`
 - Nothing (skip this session)
 
-#### 3.2 Create Salesforce Event
+#### 3.2 Summarize Transcript with AI (NEW - Added Oct 2025)
+
+```python
+# Use GPT-5-nano to generate sales-focused summary
+# Extracts qualification signals, pain points, and next steps
+summary = summarize_transcript(session_data['transcript_text'])
+# Returns structured summary instead of raw transcript
+```
+
+**Summary includes:**
+- Qualification signals (team size, volume, integrations)
+- Primary pain points and friction encountered
+- Sales intelligence (urgency, decision authority)
+- Call outcome and next steps
+
+#### 3.3 Create Salesforce Event
 
 ```python
 # From step 3.1
@@ -93,7 +108,7 @@ owner_id = '005...' or 'default_admin_id'  # Owner or fallback
 
 # From session data
 start_time = "2025-01-15T14:30:00Z"
-transcript = "AGENT: Hi...\nUSER: Hello..."
+summary = summarize_transcript(transcript)  # ← AI-generated summary (not raw transcript)
 duration_minutes = int(245.6 / 60)  # = 4 minutes
 
 # Create the Event
@@ -103,7 +118,7 @@ sf.Event.create({
     'Type': 'Voice AI Call',      # ← New picklist value Giselle adds
     'Subject': f'Voice AI Call - {start_time[:10]}',  # "Voice AI Call - 2025-01-15"
     'StartDateTime': start_time,  # ← Call timestamp
-    'Description': transcript,     # ← Full conversation
+    'Description': summary,        # ← AI-generated summary with qualification signals
     'DurationInMinutes': duration_minutes
 })
 ```
@@ -112,17 +127,30 @@ sf.Event.create({
 
 ```
 Event Record on john@acme.com's timeline:
-┌─────────────────────────────────────────┐
-│ Subject: Voice AI Call - 2025-01-15     │
-│ Type: Voice AI Call                     │
-│ Assigned To: Sarah Smith (or admin)     │
-│ Start: Jan 15, 2025 2:30 PM             │
-│ Duration: 4 minutes                     │
-│ Related To: John Doe (Lead/Contact)     │
-│ Description:                            │
-│   AGENT: Hi there, I'm Sarah...         │
-│   USER: Hello...                        │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ Subject: Voice AI Call - 2025-01-15                     │
+│ Type: Voice AI Call                                     │
+│ Assigned To: Sarah Smith (or admin)                     │
+│ Start: Jan 15, 2025 2:30 PM                             │
+│ Duration: 4 minutes                                     │
+│ Related To: John Doe (Lead/Contact)                     │
+│ Description: (AI-generated summary)                     │
+│                                                         │
+│ QUALIFICATION SIGNALS:                                  │
+│ • Team Size: 8 users (sales team) - QUALIFIED          │
+│ • Document Volume: ~150 proposals/month - QUALIFIED    │
+│ • Integrations: Salesforce mentioned - QUALIFIED       │
+│ • Use Case: Sales proposals and contracts               │
+│                                                         │
+│ CONVERSATION INSIGHTS:                                  │
+│ • Primary Pain Point: Manual proposal creation slow     │
+│ • Friction: Stuck on template customization            │
+│ • Feature Interest: Salesforce sync, e-signatures      │
+│                                                         │
+│ OUTCOME:                                                │
+│ • Call Result: Qualified for sales                     │
+│ • Next Steps: Meeting booked for 2025-01-18           │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ## Field Mapping Table
@@ -134,7 +162,7 @@ Event Record on john@acme.com's timeline:
 | **OwnerId** (Assigned To) | From Lead/Contact record, or fallback | `005f000000Xyz123` |
 | **Subject** | Template with date | `"Voice AI Call - 2025-01-15"` |
 | **StartDateTime** | session_data.start_time | `"2025-01-15T14:30:00Z"` |
-| **Description** | session_data.transcript_text | Full transcript |
+| **Description** | AI summary via GPT-5-nano | Structured summary with qualification signals |
 | **DurationInMinutes** | session_data.duration_seconds / 60 | `4` |
 
 ## Complete Script
@@ -233,7 +261,7 @@ if __name__ == '__main__':
 ### 1. Install Dependencies
 
 ```bash
-pip install simple-salesforce boto3
+pip install simple-salesforce boto3 openai
 ```
 
 ### 2. Configure Environment Variables
@@ -245,12 +273,17 @@ SF_PASSWORD=your-password
 SF_TOKEN=your-security-token
 SF_DEFAULT_OWNER_ID=005f000000Xyz123  # Admin user ID for fallback
 
+# OpenAI (for transcript summarization - NEW)
+OPENAI_API_KEY=sk-...  # Required for AI-powered summaries
+
 # S3 (already configured)
 ANALYTICS_S3_BUCKET=your-bucket-name
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=us-west-1
 ```
+
+**Note:** If `OPENAI_API_KEY` is not set, the script will fall back to using the full transcript (truncated to 32,000 characters) instead of an AI summary.
 
 ### 3. Test Manually
 

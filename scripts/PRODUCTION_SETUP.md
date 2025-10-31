@@ -43,10 +43,15 @@ SF_ORG_ALIAS=PandaDoc-Sandbox
 SF_TEST_ACCOUNT_NAME=Test Stark Industries
 SF_DEFAULT_OWNER_ID=005xxxxxxxxxx  # From step 2
 
+# OpenAI - For AI-powered transcript summarization (REQUIRED)
+OPENAI_API_KEY=sk-...  # Get from https://platform.openai.com/api-keys
+
 # S3 bucket
 ANALYTICS_S3_BUCKET=your-bucket-name
 AWS_REGION=us-west-1
 ```
+
+**Note:** The script uses GPT-5-nano to generate intelligent summaries of call transcripts. Without `OPENAI_API_KEY`, it will fall back to using raw transcripts (truncated to 32K characters).
 
 ### 4. Update Script to Use CLI Auth
 
@@ -78,7 +83,8 @@ The script now:
 1. ✅ Uses your existing production org connection (`PandaDoc-Sandbox` alias)
 2. ✅ **Filters by test account** - only processes Leads/Contacts associated with "Test Stark Industries"
 3. ✅ Skips any records not associated with the test account
-4. ✅ Creates Events only for test account records
+4. ✅ **AI-powered summarization** - Uses GPT-5-nano to extract qualification signals and key insights
+5. ✅ Creates Events only for test account records with intelligent summaries
 
 ## Safety Features
 
