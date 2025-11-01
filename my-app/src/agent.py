@@ -174,19 +174,40 @@ RESPONSE PATTERNS:
 3. For unqualified users, guide them to self-serve feature exploration directly
 4. When a QUALIFIED user requests a meeting ("schedule a call", "book a meeting", "talk to sales"), you MUST use book_sales_meeting tool IMMEDIATELY
 
-IMPORTANT: Already-qualified users (who mentioned Salesforce/HubSpot/API/5+ team/100+ docs):
-- If they request a meeting → Call book_sales_meeting() immediately
-- Do NOT re-ask qualification questions
-- Proceed directly to booking
+IMPORTANT: Check qualification FIRST before responding to meeting requests.
+- If team_size >= 5 OR monthly_volume >= 100 OR Salesforce/HubSpot/API needs → User is QUALIFIED
+- Already-qualified users (who mentioned Salesforce/HubSpot/API/5+ team/100+ docs):
+  - If they request a meeting → Call book_sales_meeting() immediately after collecting name
+  - Do NOT re-ask qualification questions
+  - Do NOT suggest self-serve exploration
+  - Proceed directly to booking flow
+
+## CRITICAL: Booking Flow (Follow This Exactly)
+When a qualified user requests a meeting:
+1. Check if you have their name. If not, ask: "Could you please share your name so I can schedule the meeting?"
+2. Once you have their name, ask for preferred date and time: "What date and time would work best for you?"
+3. ACTUALLY CALL book_sales_meeting() with the collected information - DO NOT skip this step
+4. After the tool returns results, confirm the booking with the actual meeting details from the tool response
+5. NEVER claim to have booked a meeting without actually calling the tool
+
+## MANDATORY: Tool Execution Verification
+CRITICAL RULE: You MUST NEVER claim to have completed an action without actually calling the corresponding tool.
+- If you say "I've booked your meeting" or "I've scheduled your meeting" - you MUST have called book_sales_meeting()
+- If you say "I found information" - you MUST have called unleash_search_knowledge()
+- If a tool call fails, tell the user there was an issue and offer alternatives
+- NEVER hallucinate successful completions of actions you haven't actually performed
+
+This is a trust issue. Users must be able to rely on your statements about completed actions.
 
 ## Tool Usage Priority
 1. unleash_search_knowledge - Use for ANY PandaDoc feature/product questions (but not for already-qualified users asking for meetings)
 2. book_sales_meeting - MANDATORY for qualified users requesting meetings
 
 IMPLEMENTATION RULE: When a QUALIFIED user says "let's schedule a meeting", "I'd like to talk to sales", "can we book a call", or similar:
-→ You MUST call book_sales_meeting() immediately
+→ You MUST call book_sales_meeting() immediately after collecting their name
 → Do NOT just acknowledge - actually call the tool to book the meeting
 → Do NOT search knowledge base first - go straight to booking
+→ Do NOT claim the meeting is booked until the tool has successfully returned meeting details
 
 ## Your Role
 You help Pandadoc trial users maximize their PandaDoc experience through personalized, voice-based enablement.
@@ -361,6 +382,7 @@ If you need their email for any reason, you already have it - don't ask for it a
             "deepgram": {"failures": 0, "last_failure": None, "state": "closed"},
             "cartesia": {"failures": 0, "last_failure": None, "state": "closed"},
             "unleash": {"failures": 0, "last_failure": None, "state": "closed"},
+            "zapier": {"failures": 0, "last_failure": None, "state": "closed"},
         }
 
         self.circuit_config = {
@@ -914,30 +936,32 @@ If you need their email for any reason, you already have it - don't ask for it a
         preferred_date: Optional[str] = None,
         preferred_time: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """MANDATORY: Book sales meetings for QUALIFIED users only.
+        """Book a sales meeting for qualified users who explicitly request one.
 
-        THIS IS A MANDATORY TOOL FOR QUALIFIED USERS. You MUST call this when:
-        - User explicitly requests a meeting: "schedule a call", "book a meeting", "talk to sales", "meet with your team"
-        - User is QUALIFIED (team_size >= 5 OR monthly_volume >= 100 OR Salesforce/HubSpot integration needs)
-        - User agrees to booking after you offer
+        CALL THIS TOOL IMMEDIATELY when:
+        - User says: "book a meeting", "schedule a call", "talk to sales", "meet with your team"
+        - AND user is qualified (team_size >= 5 OR monthly_volume >= 100 OR needs Salesforce/HubSpot/API)
 
-        Examples where you MUST use this tool:
-        - "Can we schedule a meeting to discuss enterprise features?" → book_sales_meeting(customer_name="...")
-        - "I'd like to talk to someone on your sales team" → book_sales_meeting(customer_name="...")
-        - "Let's book a call for tomorrow at 2pm" → book_sales_meeting(customer_name="...", preferred_date="tomorrow", preferred_time="2pm")
+        CRITICAL: The customer_name parameter is REQUIRED.
+        - If you don't have the customer's name, ask for it first: "Could you please share your name so I can schedule the meeting?"
+        - Use the exact name they provide in the customer_name parameter
+        - NEVER proceed with booking without collecting the customer's name
+
+        Examples of correct usage:
+        - User: "Can we schedule a meeting?" → Ask: "What's your name?" → User: "Aaron Nam" → Call: book_sales_meeting(customer_name="Aaron Nam")
+        - User: "I'm John Smith, let's book a call" → Call: book_sales_meeting(customer_name="John Smith")
+        - User: "Book tomorrow at 2pm" → Ask for name first, then call with preferred_date="tomorrow", preferred_time="2pm"
 
         DO NOT use this tool for:
         - UNQUALIFIED users (team_size < 5, monthly_volume < 100, no CRM needs)
         - General support questions
-        - Users who haven't agreed to book
-
-        For UNQUALIFIED users: Guide them to self-serve resources instead.
+        - Before collecting the customer's name
 
         Args:
-            customer_name: Full name of the customer
-            customer_email: Optional email address for calendar invite (defaults to user's registration email)
-            preferred_date: Optional date preference (e.g., "tomorrow", "next Tuesday")
-            preferred_time: Optional time preference (e.g., "2pm", "morning")
+            customer_name: REQUIRED - The customer's full name (ask if not provided yet)
+            customer_email: Optional - Will use stored email if not provided
+            preferred_date: Optional - e.g., "tomorrow", "next Tuesday", "November 3rd"
+            preferred_time: Optional - e.g., "2pm", "5pm", "morning"
 
         Returns:
             Dict with booking_status, meeting_link, and meeting_time
@@ -959,6 +983,56 @@ If you need their email for any reason, you already have it - don't ask for it a
             )
 
         try:
+            # Priority 1: Try Zapier webhook if configured
+            if os.getenv("ZAPIER_CALENDAR_WEBHOOK_URL"):
+                try:
+                    return await self._book_via_zapier(customer_name, email_to_use, preferred_date, preferred_time)
+                except Exception as e:
+                    logger.warning(f"Zapier webhook failed, falling back: {e}")
+                    # Fall through to next option
+
+            # Priority 2: Check if we're in demo mode (when calendar permissions aren't available)
+            demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+            if demo_mode:
+                # Demo mode - log the booking without creating actual calendar event
+                meeting_datetime = self._parse_meeting_time(preferred_date, preferred_time)
+
+                booking_details = {
+                    "customer_name": customer_name,
+                    "customer_email": email_to_use,
+                    "meeting_time": meeting_datetime.isoformat(),
+                    "qualification_signals": self.discovered_signals,
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                # Log to file for verification
+                import json
+                demo_log_file = "demo_calendar_bookings.json"
+                try:
+                    with open(demo_log_file, "r") as f:
+                        bookings = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    bookings = []
+
+                bookings.append(booking_details)
+
+                with open(demo_log_file, "w") as f:
+                    json.dump(bookings, f, indent=2)
+
+                logger.info(f"DEMO MODE: Calendar booking logged for {customer_name} at {meeting_datetime}")
+
+                # Return success response
+                return {
+                    "booking_status": "confirmed",
+                    "meeting_time": meeting_datetime.strftime("%A, %B %d at %I:%M %p %Z"),
+                    "meeting_link": "https://meet.google.com/demo-link-" + str(int(datetime.now().timestamp())),
+                    "calendar_event_id": f"demo_{int(datetime.now().timestamp())}",
+                    "action": "meeting_booked",
+                    "demo_mode": True,
+                    "message": "Demo booking created successfully (calendar permissions not available)"
+                }
+
             # Initialize Google Calendar client
             service = self._get_calendar_service()
 
@@ -990,15 +1064,18 @@ If you need their email for any reason, you already have it - don't ask for it a
                         "GOOGLE_CALENDAR_TIMEZONE", "America/Toronto"
                     ),
                 },
-                "attendees": [
-                    {"email": email_to_use},
-                ],
-                "conferenceData": {
-                    "createRequest": {
-                        "requestId": f"pandadoc-{int(datetime.now().timestamp())}",
-                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                    }
-                },
+                # Service accounts can't invite attendees without domain delegation
+                # So we'll include the email in the description instead
+                # "attendees": [
+                #     {"email": email_to_use},
+                # ],
+                # Service accounts also can't create Google Meet links on personal calendars
+                # "conferenceData": {
+                #     "createRequest": {
+                #         "requestId": f"pandadoc-{int(datetime.now().timestamp())}",
+                #         "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                #     }
+                # },
                 "reminders": {
                     "useDefault": False,
                     "overrides": [
@@ -1014,8 +1091,8 @@ If you need their email for any reason, you already have it - don't ask for it a
                 .insert(
                     calendarId=os.getenv("GOOGLE_CALENDAR_ID"),
                     body=event,
-                    conferenceDataVersion=1,
-                    sendUpdates="all",  # Send invites to attendees
+                    # conferenceDataVersion=1,  # Not needed without conferenceData
+                    # sendUpdates="all",  # Can't send invites without domain delegation
                 )
                 .execute()
             )
@@ -1129,6 +1206,74 @@ If you need their email for any reason, you already have it - don't ask for it a
             days_ahead = 7 - tomorrow.weekday()
             return tomorrow + timedelta(days=days_ahead)
         return tomorrow
+
+    async def _book_via_zapier(
+        self, customer_name: str, email: str, preferred_date: Optional[str], preferred_time: Optional[str]
+    ) -> Dict[str, Any]:
+        """Book meeting via Zapier webhook."""
+        import httpx
+        from opentelemetry import trace as otel_trace
+
+        meeting_datetime = self._parse_meeting_time(preferred_date, preferred_time)
+
+        payload = {
+            "summary": f"PandaDoc Sales Consultation - {customer_name}",
+            "description": self._format_meeting_description(customer_name, email),
+            "start_date": meeting_datetime.strftime("%m/%d/%Y"),
+            "start_time": meeting_datetime.strftime("%H:%M"),
+            "end_date": (meeting_datetime + timedelta(minutes=30)).strftime("%m/%d/%Y"),
+            "end_time": (meeting_datetime + timedelta(minutes=30)).strftime("%H:%M"),
+            "attendees": email,
+            "calendar": "primary"
+        }
+
+        # Optional: Create a child span for the Zapier webhook call
+        current_span = otel_trace.get_current_span()
+        if current_span and current_span.is_recording():
+            current_span.set_attribute("booking.method", "zapier")
+            current_span.set_attribute("booking.customer_name", customer_name)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                os.getenv("ZAPIER_CALENDAR_WEBHOOK_URL"),
+                json=payload,
+                timeout=5.0
+            )
+            response.raise_for_status()
+
+        logger.info(f"✅ Zapier webhook triggered for {customer_name}")
+        return {
+            "booking_status": "confirmed",
+            "meeting_time": meeting_datetime.strftime("%A, %B %d at %I:%M %p %Z"),
+            "meeting_link": "Google Meet link will be sent via email",
+            "action": "meeting_booked",
+            "via": "zapier"
+        }
+
+    def _format_meeting_description(
+        self, customer_name: str, customer_email: str
+    ) -> str:
+        """Format meeting description with qualification signals.
+
+        Args:
+            customer_name: Customer's full name
+            customer_email: Customer's email address
+
+        Returns:
+            Formatted description string with qualification context
+        """
+        description_parts = [
+            "Sales consultation for qualified trial user",
+            "",
+            f"Customer: {customer_name}",
+            f"Email: {customer_email}",
+            "Qualification Signals:",
+            f"- Team Size: {self.discovered_signals.get('team_size', 'Unknown')}",
+            f"- Monthly Volume: {self.discovered_signals.get('monthly_volume', 'Unknown')}",
+            f"- Integration Needs: {', '.join(self.discovered_signals.get('integration_needs', []))}",
+            f"- Industry: {self.discovered_signals.get('industry', 'Unknown')}",
+        ]
+        return "\n".join(description_parts)
 
     def _determine_next_action(self, query: str, results: list) -> str:
         """Determine the best next action based on query and results.

@@ -1,0 +1,16 @@
+[
+  {
+    "customer_name": "Fallback Test User",
+    "customer_email": "test@example.com",
+    "meeting_time": "2025-11-03T10:00:00",
+    "qualification_signals": {
+      "team_size": 10,
+      "monthly_volume": 500,
+      "integration_needs": [
+        "HubSpot"
+      ],
+      "industry": "Finance"
+    },
+    "timestamp": "2025-10-31T16:40:46.429765"
+  }
+]

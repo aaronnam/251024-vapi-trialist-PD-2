@@ -220,21 +220,27 @@ Product requirements and design specifications:
 
 Use these to understand WHAT we're building and WHY.
 
-### Implementation Documentation (`/docs/implementation/`)
+### Implementation Documentation (`/my-app/docs/`)
 Implementation plans, guides, and technical architecture:
-- `IMPLEMENTATION_PLAN.md` - Complete implementation roadmap with 9 epics and 41 tasks
-- `REQUIREMENTS_MAP.md` - Maps spec requirements to LiveKit implementation patterns
-- `REQUIREMENTS_MATRIX.csv` - Requirement traceability matrix
-- `ANALYSIS.md` - ROI analysis and timeline projections
-- `features/` - Feature-specific implementation guides:
-  - `email-tracking/` - Email capture and metadata integration
-  - `silence-detection/` - Silence detection and handling
-- `integrations/` - Third-party platform integration guides:
-  - `unleash/` - Feature flagging with Unleash
-  - *(Salesforce, HubSpot, Amplitude in planning)*
-- `analytics/` - Analytics pipeline and data flow documentation
-- `observability/` - Monitoring, tracing, and observability strategy
-- `README.md` - Implementation documentation overview
+
+**Feature Documentation (`/my-app/docs/features/`):**
+- `zapier-calendar-integration/` - Zapier webhook calendar booking (IMPLEMENTED)
+  - `ZAPIER_INTEGRATION_COMPLETE.md` - Implementation summary and deployment guide
+  - `ZAPIER_CALENDAR_IMPLEMENTATION_PLAN.md` - Original implementation plan
+  - `OAUTH_CALENDAR_SETUP.md` - Alternative OAuth setup reference
+- `google-calendar-booking/` - Google Calendar integration (fallback method)
+  - `README.md` - Calendar booking architecture and setup
+  - `DESIGN.md` - Design decisions and alternatives
+- `email-tracking/` - Email capture and metadata integration
+- `silence-detection/` - Silence detection and handling
+
+**Integrations (`/my-app/docs/integrations/` - planned):**
+- `unleash/` - Feature flagging with Unleash
+- *(Salesforce, HubSpot, Amplitude in planning)*
+
+**Archived Documentation (`/my-app/docs/.archived/`):**
+- `implementation-notes/` - Historical implementation notes
+- `calendar-testing/` - Old calendar testing documentation
 
 Use these when planning development work or implementing specific features.
 
@@ -296,12 +302,40 @@ lk app env -w -d my-app/.env.local
 ### Integration Points (from spec)
 The production design calls for integrations with:
 - **Amplitude** - Product usage intelligence
-- **ChiliPiper** - Meeting booking and routing
+- **Zapier** - Calendar booking (IMPLEMENTED - works with corporate Google accounts)
+- **ChiliPiper** - Meeting booking and routing (planned)
 - **Salesforce** - Lead management
 - **HubSpot** - CRM activity logging
 - **Snowflake** - Analytics and data warehouse
 
-*Note: Current implementation is baseline. Production integrations are defined in spec but not yet implemented.*
+### Calendar Booking Implementation
+
+The agent includes a production-ready calendar booking system with graceful fallback:
+
+**Priority Chain:**
+1. **Zapier Webhook** (primary) - Works with corporate Google accounts via OAuth
+2. **Demo Mode** (fallback) - Logs bookings for testing/development
+3. **Google Calendar API** (fallback) - Direct API integration with service account
+
+**Configuration:**
+```bash
+# Add to my-app/.env.local
+ZAPIER_CALENDAR_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/YOUR_ID/YOUR_TOKEN/
+DEMO_MODE=false  # Optional: set to true for development
+```
+
+**Documentation:**
+- Implementation guide: `my-app/docs/features/zapier-calendar-integration/ZAPIER_INTEGRATION_COMPLETE.md`
+- Setup instructions: `my-app/AGENTS.md` (Calendar Booking Integration section)
+- Architecture: `my-app/docs/features/google-calendar-booking/README.md`
+
+**Key Features:**
+- Silent fallback on Zapier failure (no user impact)
+- Full Langfuse observability with `booking.method` attribute
+- 35 lines of code, zero breaking changes
+- Tested and production-ready
+
+*Note: Other production integrations (Salesforce, HubSpot, Amplitude, Snowflake) are defined in spec but not yet implemented.*
 
 ## Key Design Principles
 

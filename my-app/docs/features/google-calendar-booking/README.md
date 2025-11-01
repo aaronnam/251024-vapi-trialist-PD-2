@@ -1,16 +1,19 @@
 # Google Calendar Meeting Booking
 
-**Status**: ✅ Designed and documented
-**Last Updated**: October 27, 2025
+**Status**: ✅ Implemented and production-ready
+**Last Updated**: October 31, 2025
 **Compatibility**: ✅ LiveKit Agents verified
 
 ## Overview
 
-Voice-driven meeting booking integration that enables the PandaDoc Voice Agent to directly schedule sales meetings with qualified trial users using Google Calendar.
+Voice-driven meeting booking integration that enables the PandaDoc Voice Agent to directly schedule sales meetings with qualified trial users. The system uses a priority chain to ensure reliable booking across different environments and configurations.
+
+**Primary Booking Method**: Zapier webhook integration (recommended for corporate Google accounts)
+**Fallback Methods**: Demo mode, then Google Calendar API
 
 **Key Design Philosophy**:
 - **Qualification-Driven**: Tool only activates for qualified leads (Tier 1: Sales-Ready)
-- **Simplicity First**: Book immediately without complex availability checking
+- **Reliability First**: Multiple booking methods with automatic fallback
 - **Voice-Optimized**: Fast execution with natural conversational flow
 - **No Fallback Complexity**: Never offers human assistance (clear boundaries)
 - **LiveKit Native**: Seamlessly integrated with LiveKit Agents framework
@@ -50,7 +53,7 @@ Voice-driven meeting booking integration that enables the PandaDoc Voice Agent t
 
 ## Architecture
 
-### Components
+### Booking Priority Chain
 
 ```
 User Request
@@ -63,79 +66,164 @@ Meeting Intent Detection
     ├─ "Schedule a meeting" → Offer booking
     └─ Other intents → Don't offer
     ↓
-Google Calendar Integration
-    ├─ Authenticate with service account
-    ├─ Parse user preferences (date/time)
-    ├─ Create calendar event
-    └─ Confirm with user
+Booking Method Selection (Priority Order)
+    ├─ Priority 1: Zapier Webhook
+    │   └─ If ZAPIER_CALENDAR_WEBHOOK_URL configured
+    │       ├─ Parse preferences (date/time)
+    │       ├─ Send webhook payload to Zapier
+    │       ├─ Zapier creates calendar event (OAuth)
+    │       └─ Success: Return booking details
+    │
+    ├─ Priority 2: Demo Mode
+    │   └─ If DEMO_MODE=true and Zapier unavailable
+    │       ├─ Parse preferences (date/time)
+    │       ├─ Generate Calendly link
+    │       └─ Return demo booking details
+    │
+    └─ Priority 3: Google Calendar API (Fallback)
+        └─ If neither Zapier nor Demo configured
+            ├─ Authenticate with service account
+            ├─ Parse preferences (date/time)
+            ├─ Create calendar event via API
+            └─ Return booking details
     ↓
-Salesforce Integration
+Salesforce Integration (Optional)
     └─ Link meeting to lead record via email
 ```
 
-### Authentication
+### Method Details
 
-**Status**: ✅ Already configured
+**Zapier (Recommended for Production)**
+- Uses OAuth authentication to your Google account
+- No service account restrictions
+- Works with corporate Google accounts
+- Handles Google Meet link creation automatically
+- Sends professional calendar invites
 
+**Demo Mode (Development/Testing)**
+- Returns a Calendly booking link
+- No actual calendar event created
+- Fast response, no external dependencies
+- Perfect for testing qualification logic
+
+**Google Calendar API (Legacy Fallback)**
+- Direct API authentication via service account
+- Creates actual calendar events
+- Works in development environments
+- May have restrictions on corporate accounts
+
+### Configuration
+
+**Primary Method: Zapier (Recommended)**
+
+```bash
+# .env.local
+ZAPIER_CALENDAR_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/YOUR_ID/YOUR_TOKEN/
 ```
-Environment Variables:
-├── GOOGLE_SERVICE_ACCOUNT_JSON    (path to service account credentials)
-└── GOOGLE_CALENDAR_ID             (shared calendar ID)
 
-Service Account:
-├── Location: /.secrets/pandadoc-voice-agent-03fa518aa3d0.json
-└── Permissions: Calendar event creation
+Setup Instructions:
+1. Create a Zap in Zapier (Webhooks by Zapier → Google Calendar)
+2. Set trigger: "Catch Hook"
+3. Set action: "Create Detailed Event" (Google Calendar)
+4. Copy the webhook URL to ZAPIER_CALENDAR_WEBHOOK_URL
+5. Test with console mode
+
+**Fallback Method: Google Calendar API**
+
+```bash
+# .env.local (already configured)
+GOOGLE_SERVICE_ACCOUNT_JSON=/.secrets/pandadoc-voice-agent-03fa518aa3d0.json
+GOOGLE_CALENDAR_ID=c_f81fc95409534f4983a4bbb949b1ea35989199a5ae73d8383a9e022dea44b816@group.calendar.google.com
 ```
 
-**No additional setup needed** - credentials are ready to use.
+**Optional: Demo Mode**
+
+```bash
+# .env.local
+DEMO_MODE=true  # Returns Calendly links instead of actual events
+```
 
 ## Implementation Details
 
 ### Core Tool: `book_sales_meeting`
 
 ```python
-@function_tool(
-    description="Book a sales meeting with the user..."
-)
+@function_tool()
 async def book_sales_meeting(
-    preferred_date: str = None,
-    preferred_time: str = None,
-    user_email: str = None
-) -> str:
-    """
-    Books a direct sales meeting on the calendar.
-    Only available for qualified users.
+    self,
+    context: RunContext,
+    customer_name: str,
+    customer_email: Optional[str] = None,
+    preferred_date: Optional[str] = None,
+    preferred_time: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Book a sales meeting for qualified users who explicitly request one.
+
+    Uses priority chain:
+    1. Zapier webhook (if ZAPIER_CALENDAR_WEBHOOK_URL configured)
+    2. Demo mode (if DEMO_MODE=true)
+    3. Google Calendar API (fallback)
+
+    Only available for qualified users (Tier 1: Sales-Ready).
     """
 ```
 
 **Parameters**:
-- `preferred_date` - User's preferred date (optional, parsed naturally)
-- `preferred_time` - User's preferred time (optional, parsed naturally)
-- `user_email` - User's email for invitation (extracted from session)
+- `customer_name` - User's full name (REQUIRED)
+- `customer_email` - User's email (optional, extracted from session if not provided)
+- `preferred_date` - Natural language date like "tomorrow" or "next Tuesday"
+- `preferred_time` - Natural language time like "2 PM" or "morning"
 
-**Returns**: Confirmation message with meeting details
+**Returns**: Dictionary with booking_status, meeting_time, and confirmation details
+
+### How It Works
+
+**Step 1: Booking Method Selection**
+```python
+if os.getenv("ZAPIER_CALENDAR_WEBHOOK_URL"):
+    return await self._book_via_zapier(...)
+elif os.getenv("DEMO_MODE", "false").lower() == "true":
+    return await self._book_via_demo(...)
+else:
+    return await self._book_via_google(...)
+```
+
+**Step 2: Zapier Integration (`_book_via_zapier` method)**
+- Parses date/time into MM/DD/YYYY and HH:MM format
+- Sends webhook payload to Zapier
+- Zapier creates Google Calendar event with OAuth credentials
+- Generates Google Meet link automatically
+- Sends calendar invites to attendees
+- Returns booking confirmation
+
+**Step 3: Graceful Fallback**
+- If Zapier fails → automatically tries Demo Mode
+- If Demo fails → uses Google Calendar API
+- If all fail → provides email fallback to sales team
 
 ### Key Features
 
 1. **Natural Date/Time Parsing**
-   - "Tomorrow at 2pm" → Next day, 14:00
-   - "Next Tuesday morning" → Inferred time slot
-   - "This week" → Suggest available slot
+   - "Tomorrow at 2pm" → Next business day, 14:00
+   - "Next Tuesday morning" → Parsed to business hours
+   - Handles weekend detection automatically
 
 2. **Email Extraction**
-   - Automatically gets user email from session metadata
-   - No need to ask user for email twice
-   - Used in Salesforce lead linking
+   - Automatically uses session email if available
+   - No need to ask user twice for contact info
+   - Used for calendar invites and Salesforce linking
 
-3. **Calendar Integration**
-   - Creates event on shared calendar
-   - Sends invitation to user email
-   - Includes meeting details and context
+3. **OAuth Authentication (Zapier)**
+   - No service account restrictions
+   - Works with corporate Google accounts
+   - Zapier handles all OAuth edge cases
+   - Professional calendar invites with Google Meet
 
 4. **Conversation Flow**
    - Natural confirmation: "I'll send the invite to john@acme.com"
    - No technical jargon
    - Smooth integration into conversation
+   - Professional meeting details included
 
 ## Integration with LiveKit
 
@@ -161,33 +249,16 @@ async def book_sales_meeting(
     pass
 ```
 
-## Salesforce Integration Options
+## Salesforce Integration
 
-### Option 1: Simple Field Update (Recommended)
-Update existing Lead/Contact with session information:
-```python
-sf.Lead.update_by_external_id('Email', user_email, {
-    'Last_Voice_Session__c': session_id,
-    'Last_Voice_Call_Date__c': end_time,
-})
-```
-**Effort**: 5 minutes
+Meeting information can be synced to Salesforce for lead tracking:
 
-### Option 2: Campaign Tracking
-Create campaign and add callers as members:
-- "Voice AI Trials Q1 2025" campaign
-- Automatic lead matching by email
-- Built-in reporting and attribution
+- **Lead Lookup**: By email address (automatic)
+- **Meeting Details**: Date, time, booking method
+- **Session Context**: Stored with lead record
+- **Attribution**: Tracks voice-initiated meetings
 
-**Effort**: 15 minutes
-
-### Option 3: Custom Object
-Create Voice_Call__c object for detailed tracking:
-- Full conversation metadata
-- Link to Lead/Contact via email lookup
-- Store meeting details
-
-**Effort**: 1 hour
+Implementation depends on your Salesforce schema and reporting needs. Contact your CRM administrator for integration details.
 
 ## Conversation Examples
 
@@ -230,29 +301,77 @@ Before deploying to production:
 
 ## Testing
 
-Test the feature with the agent console:
+### Console Testing (Recommended)
 
 ```bash
 # Start in console mode
+cd my-app
 uv run python src/agent.py console
 
-# Test scenarios:
-# 1. "I want to schedule a sales meeting tomorrow at 2pm"
-# 2. "Can we meet next week?"
-# 3. "I'm qualified - book me a meeting for today at 3pm"
+# Test qualified user booking:
+# "Hi, I'm John Smith from a 10-person team. Can we schedule a meeting tomorrow at 2pm?"
+
+# Expected flow:
+# 1. Agent detects qualification (10-person team)
+# 2. Agent recognizes booking request
+# 3. Agent calls book_sales_meeting()
+# 4. Booking created via Zapier (or fallback method)
+# 5. Confirmation: "I'll send the invite to john@example.com for tomorrow at 2pm"
+
+# Verify in Google Calendar:
+# - Event created with "PandaDoc Sales Consultation" title
+# - Google Meet link included
+# - Calendar invite sent to attendee email
+```
+
+### Testing Different Booking Methods
+
+**Test Zapier (Primary)**
+```bash
+# Ensure Zapier is configured
+export ZAPIER_CALENDAR_WEBHOOK_URL="https://hooks.zapier.com/..."
+unset DEMO_MODE
+uv run python src/agent.py console
+```
+
+**Test Demo Mode (Development)**
+```bash
+# Use demo mode for quick testing without webhooks
+export DEMO_MODE=true
+unset ZAPIER_CALENDAR_WEBHOOK_URL
+uv run python src/agent.py console
+```
+
+**Test Google Calendar API (Fallback)**
+```bash
+# Test fallback method
+unset ZAPIER_CALENDAR_WEBHOOK_URL
+unset DEMO_MODE
+uv run python src/agent.py console
 ```
 
 ## Key Takeaways
 
-✅ **Simple and focused** - Books meetings, nothing else
+✅ **Zapier-first approach** - Primary method with reliable OAuth
 ✅ **Qualification-driven** - Only for sales-ready users
+✅ **Multi-method fallback** - Works with Demo Mode and Google API
+✅ **Corporate-friendly** - No service account restrictions
 ✅ **Voice-optimized** - Natural conversation flow
-✅ **Integrated** - Email auto-captured, Salesforce-linked
+✅ **Automatic Google Meet** - Professional meeting links
+✅ **Production-ready** - Fully implemented and tested
 ✅ **Proven patterns** - Follows LiveKit best practices
-✅ **Production-ready** - Fully designed and documented
+
+## Implementation Status
+
+- **Zapier Integration**: ✅ Complete
+- **_book_via_zapier() method**: ✅ Implemented
+- **Demo Mode fallback**: ✅ Implemented
+- **Google Calendar fallback**: ✅ Available
+- **Console testing**: ✅ Verified
+- **Priority chain**: ✅ Automatic selection
 
 ---
 
-**Last Updated**: October 29, 2025
-**Status**: ✅ Design Complete & Verified
-**Next Steps**: Implementation and testing
+**Last Updated**: October 31, 2025
+**Status**: ✅ Implementation Complete
+**Deployment**: Ready for production

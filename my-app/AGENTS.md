@@ -249,3 +249,37 @@ If you see errors like:
 3. **Always restart after updating:** `lk agent restart`
 4. Wait for new worker to start (check `lk agent status` for active replicas)
 5. Test with a new session (old sessions won't use new secrets)
+
+## Calendar Booking Integration
+
+### Priority Order
+The agent tries booking methods in this order:
+1. **Zapier Webhook** (if ZAPIER_CALENDAR_WEBHOOK_URL is set)
+2. **Demo Mode** (if DEMO_MODE=true)
+3. **Google Calendar API** (original implementation)
+
+### Zapier Calendar Setup
+To enable Zapier calendar booking (recommended for corporate Google accounts):
+
+```bash
+# Add to .env.local
+ZAPIER_CALENDAR_WEBHOOK_URL=https://hooks.zapier.com/hooks/catch/YOUR_ID/YOUR_TOKEN/
+```
+
+The Zapier webhook expects this payload format:
+- Dates: MM/DD/YYYY format
+- Times: HH:MM (24-hour format)
+- Creates Google Meet link automatically
+- Sends calendar invites to attendees
+
+### Testing Calendar Integration
+```bash
+# Test in console mode
+uv run python src/agent.py console
+
+# Say: "I'm John Smith from a 10-person team. Book a meeting for tomorrow at 2 PM."
+# Check your Google Calendar for the event
+```
+
+### Fallback Behavior
+If Zapier fails (network issue, bad URL, etc.), the agent automatically falls back to the next available method. Failures are logged but don't crash the agent or affect user experience.
